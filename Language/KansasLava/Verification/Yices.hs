@@ -21,7 +21,6 @@ yicesCircuit opts circ = do
 -- | Generate yices declarations from the reified circuit
 mkDecls ipc rc = do
   let inps = map yPadDecl (theSrcs rc)
-  print inps
   let cmds = concatMap yEntDecl (theCircuit rc)
   mapM print  cmds
   runCmdsY ipc $ inps ++ cmds
@@ -45,16 +44,37 @@ test x y = x + 1 + y
 ytyp B = VarT "bool"
 ytyp CB = VarT "controlbit"
 ytyp (S 32) = VarT $ "int"
+ytyp ClkTy = VarT "bool"
+ytyp RstTy = VarT "bool"
+ytyp (TupleTy tys) = TUP (map ytyp tys)
+ytyp ty = error $ "ytyp: Non-handled Lava type " ++ show ty
 -- ytyp (U x) = VarT $ "(unsigned" ++ show x ++ ")"
 -- ytyp (S x) = VarT $ "(signed" ++ show x ++ ")"
-ytyp ty = error $ "ytyp: Non-handled Lava type " ++ show ty
+
 
 
 -- | Map Lava expressions (entities, actually) to Yices exprs
-yexp (Entity (Name "Int" "+") [(o,os)] [(Var "i0", ity0, d0), (Var "i1", ity1, d1)] _) =
-  yExpDriver d0 :+: yExpDriver d1
-yexp ent@(Entity nm outs ins _) = error $ show ent
+yexp (Entity nm [(o,os)] [(Var "i0", ity0, d0), (Var "i1", ity1, d1)] _)
+  | Just op <- lookup nm binOps = yExpDriver d0 `op` yExpDriver d1
+yexp (Entity nm [(o,oty)] [(_, ity, d0)] _)
+  | Just op <- lookup nm unOps = op $ yExpDriver d0
+yexp (Entity nm [(o,oty)] [(i0,_,d0),(i1,_,d1),(i2,_,d2)] [])
+  | Just op <- lookup nm ternOps =
+               op (yExpDriver d0) (yExpDriver d1) (yExpDriver d2)
+yexp ent@(Entity nm outs ins _) = error $ "yexp:" ++ show ent
 
+binOps = [(Name "Int" "+", (:+:))
+         ,(Name "Bool" "and2", (\x y -> AND [x, y]))
+         ,(Name "Unsigned" ".>.", (:>))
+         ,(Name "Int" ".>.", (:>))
+         ,(Name "Lava" "pair", \x y -> MKTUP [x,y])
+
+         ]
+unOps = [(Name "Lava" "fst", \t -> SELECT_T t 0)
+        ,(Name "Lava" "snd", \t -> SELECT_T t 1)
+        ,(Name "Lava" "id", id)]
+
+ternOps = [(Name "Lava" "mux2", IF)]
 
 -- | Map Lava drivers to yices exprs
 yExpDriver (Port (Var n) id) = VarE $ n ++ "__" ++ show id
