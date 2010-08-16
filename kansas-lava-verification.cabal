@@ -23,7 +23,8 @@ Library
                  -- kansas-lava
                  sized-types, directory, random, yices==0.0.0.7
 
-  Exposed-modules: Language.KansasLava.Verification.Yices
+  Exposed-modules: Language.KansasLava.Verification.Yices,
+                   Language.KansasLava.Verification
   Other-modules:
 
 -- hack for now
