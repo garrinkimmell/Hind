@@ -125,16 +125,11 @@ exclusive ipc a b = do
     s -> return $ Just s
 
 
+equivCheck :: (Ports a) => a -> a -> IO Bool
 equivCheck c1 c2 = do
   ipc <- createYicesPipe "yices" []
   rc1 <- reifyCircuit c1
   rc2 <- reifyCircuit c2
-
-  unless (length (theSinks rc1) == length (theSinks rc2)) $
-         fail "Circuits don't have the same number of outputs"
-
-  unless (length (theSrcs rc1) == length (theSrcs rc2)) $
-         fail "Circuits don't have the same number of inputs"
 
   res1 <- mkDecls "c0__" ipc (sortCirc rc1)
   res2 <- mkDecls "c1__" ipc (sortCirc rc2)
