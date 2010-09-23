@@ -148,7 +148,7 @@ equivCheck c1 c2 = do
   case res of
     Sat core -> do
              putStrLn "Not equivalent"
-             putStrLn "SAT Core"
+             putStrLn "SAT Model"
              print core
              return False
     UnSat _ -> do
