@@ -1,3 +1,4 @@
+{-# LANGUAGE PatternGuards #-}
 module Language.KansasLava.Verification.Yices where
 
 import Language.KansasLava
@@ -5,36 +6,47 @@ import Math.SMT.Yices.Syntax
 import Math.SMT.Yices.Pipe
 
 import Data.Graph
-
+import Control.Monad
 
 import Data.Sized.Unsigned
 
-yicesCircuit :: Ports a => [ReifyOptions] -> a -> IO YicesIPC
-yicesCircuit opts circ = do
+yicesCircuit :: Ports a =>  a -> IO YicesIPC
+yicesCircuit circ = do
   ipc <- createYicesPipe "yices" []
-  rc <- reifyCircuit opts circ
-  res <- mkDecls ipc (sortCirc rc)
+  rc <- reifyCircuit circ
+  res <- mkDecls "p0" ipc (sortCirc rc)
+  status <- runCmdsY ipc [STATUS]
+  print status
   return ipc
 
 
 
 -- | Generate yices declarations from the reified circuit
-mkDecls ipc rc = do
-  let inps = map yPadDecl (theSrcs rc)
-  let cmds = concatMap yEntDecl (theCircuit rc)
-  mapM print  cmds
-  runCmdsY ipc $ inps ++ cmds
+mkDecls prefix ipc rc = do
+  let inps = map (yPadDecl prefix) (theSrcs rc)
+  -- print inps
+  let cmds = concatMap (yEntDecl prefix) (theCircuit rc)
+  -- print cmds
+  let outs = map (yPadOutput prefix) (theSinks rc)
+  -- print outs
+  runCmdsY ipc $ inps ++ cmds ++ outs
 
 
 -- | Generate the declarations for the input pads.
-yPadDecl (PadVar idx name, ty) = DEFINE (name ++ "__" ++ show idx, ytyp ty) Nothing
 
+yPadDecl prefix (OVar idx name, ty) =
+  DEFINE (prefix ++ name ++ "__" ++ show idx, ytyp ty) Nothing
+yPadDecl _ n = error $ "ypd" ++ show n
+
+
+yPadOutput prefix (OVar idx name, ty, driver) =
+  DEFINE (prefix ++ name, ytyp ty) (Just (yExpDriver prefix driver))
 
 -- | Generate the declaration for a single entity
-yEntDecl (id,ent@(Entity nm outs ins _)) =
-  [DEFINE (show port ++ "__" ++ show id,ytyp oty) (Just $ yexp ent)
+yEntDecl prefix  (id,ent@(Entity nm outs ins _)) =
+  [DEFINE (prefix ++ port ++ "__" ++ show id,ytyp oty) (Just $ yexp prefix ent)
    | (port, oty) <- outs]
-yEntDecl (_,ent) = error $ show ent
+yEntDecl _ (_,ent) = error $ show ent
 
 
 test :: Comb Int -> Comb Int -> Comb Int
@@ -42,10 +54,10 @@ test x y = x + 1 + y
 
 -- | Map Lava types to Yices types
 ytyp B = VarT "bool"
-ytyp CB = VarT "controlbit"
+-- ytyp CB = VarT "controlbit"
 ytyp (S 32) = VarT $ "int"
-ytyp ClkTy = VarT "bool"
-ytyp RstTy = VarT "bool"
+-- ytyp ClkTy = VarT "bool"
+-- ytyp RstTy = VarT "bool"
 ytyp (TupleTy tys) = TUP (map ytyp tys)
 ytyp ty = error $ "ytyp: Non-handled Lava type " ++ show ty
 -- ytyp (U x) = VarT $ "(unsigned" ++ show x ++ ")"
@@ -54,17 +66,18 @@ ytyp ty = error $ "ytyp: Non-handled Lava type " ++ show ty
 
 
 -- | Map Lava expressions (entities, actually) to Yices exprs
-yexp (Entity nm [(o,os)] [(Var "i0", ity0, d0), (Var "i1", ity1, d1)] _)
-  | Just op <- lookup nm binOps = yExpDriver d0 `op` yExpDriver d1
-yexp (Entity nm [(o,oty)] [(_, ity, d0)] _)
-  | Just op <- lookup nm unOps = op $ yExpDriver d0
-yexp (Entity nm [(o,oty)] [(i0,_,d0),(i1,_,d1),(i2,_,d2)] [])
+yexp prefix (Entity nm [(o,os)] [("i0", ity0, d0), ("i1", ity1, d1)] _)
+  | Just op <- lookup nm binOps = yExpDriver prefix d0 `op` yExpDriver prefix  d1
+yexp prefix (Entity nm [(o,oty)] [(_, ity, d0)] _)
+  | Just op <- lookup nm unOps = op $ yExpDriver prefix d0
+yexp prefix (Entity nm [(o,oty)] [(i0,_,d0),(i1,_,d1),(i2,_,d2)] [])
   | Just op <- lookup nm ternOps =
-               op (yExpDriver d0) (yExpDriver d1) (yExpDriver d2)
-yexp ent@(Entity nm outs ins _) = error $ "yexp:" ++ show ent
+               op (yExpDriver prefix d0) (yExpDriver prefix  d1) (yExpDriver prefix d2)
+yexp _  ent@(Entity nm outs ins _) = error $ "yexp:" ++ show ent
 
 binOps = [(Name "Int" "+", (:+:))
-         ,(Name "Bool" "and2", (\x y -> AND [x, y]))
+         ,(Name "Lava" "and2", (\x y -> AND [x, y]))
+         ,(Name "Lava" "or2", (\x y -> OR [x, y]))
          ,(Name "Unsigned" ".>.", (:>))
          ,(Name "Int" ".>.", (:>))
          ,(Name "Lava" "pair", \x y -> MKTUP [x,y])
@@ -72,14 +85,15 @@ binOps = [(Name "Int" "+", (:+:))
          ]
 unOps = [(Name "Lava" "fst", \t -> SELECT_T t 0)
         ,(Name "Lava" "snd", \t -> SELECT_T t 1)
-        ,(Name "Lava" "id", id)]
+        ,(Name "Lava" "id", id)
+        ,(Name "Bool" "not", NOT)]
 
 ternOps = [(Name "Lava" "mux2", IF)]
 
 -- | Map Lava drivers to yices exprs
-yExpDriver (Port (Var n) id) = VarE $ n ++ "__" ++ show id
-yExpDriver (Pad (PadVar idx name)) = VarE $ name ++ "__" ++ show idx
-yExpDriver (Lit x) = LitI (toInteger x)
+yExpDriver prefix (Port n id) = VarE $ prefix ++ n ++ "__" ++ show id
+yExpDriver prefix (Pad (OVar idx name)) = VarE $ prefix ++ name ++ "__" ++ show idx
+-- yExpDriver (Lit x) = LitI (toInteger x)
 
 
 
@@ -100,3 +114,58 @@ sortCirc rc = rc { theCircuit = circ }
         circ = [(k,n) | (n,k,_) <- map info sorted]
 
 
+
+exclusive ipc a b = do
+  runCmdsY' ipc [PUSH,ASSERT (a := b)]
+  res <- checkY ipc
+  runCmdsY ipc [POP]
+  case res of
+    UnSat _ -> return Nothing
+    InCon _ -> return Nothing
+    s -> return $ Just s
+
+
+equivCheck c1 c2 = do
+  ipc <- createYicesPipe "yices" []
+  rc1 <- reifyCircuit c1
+  rc2 <- reifyCircuit c2
+
+  unless (length (theSinks rc1) == length (theSinks rc2)) $
+         fail "Circuits don't have the same number of outputs"
+
+  unless (length (theSrcs rc1) == length (theSrcs rc2)) $
+         fail "Circuits don't have the same number of inputs"
+
+  res1 <- mkDecls "c0__" ipc (sortCirc rc1)
+  res2 <- mkDecls "c1__" ipc (sortCirc rc2)
+
+  -- For each output, assert that they're different
+  let outAssertions = zipWith neqOutput (theSinks rc1) (theSinks rc2)
+  -- For each output, assert that they're the same
+  let inAssertions = zipWith eqInput (theSrcs rc1) (theSrcs rc2)
+  runCmdsY' ipc (inAssertions ++ outAssertions)
+  res <- checkY ipc
+  case res of
+    Sat core -> do
+             putStrLn "Not equivalent"
+             putStrLn "SAT Core"
+             print core
+             return False
+    UnSat _ -> do
+             putStrLn "Equivalent"
+             return True
+
+  where neqOutput (o1,_,_) (o2,_,_) =
+          ASSERT ((outputName "c0__" o1)  :/= (outputName "c1__") o2)
+        outputName prefix  (OVar idx name) =
+          VarE $ prefix ++ name
+
+        eqInput (i1,_) (i2,_) =
+          ASSERT ((inputName "c0__" i1)  := (inputName "c1__") i2)
+        inputName prefix  (OVar idx name) =
+          VarE $ prefix ++ name ++ "__" ++ show idx
+
+
+c1,c2 :: Seq Bool -> Seq Bool -> Seq Bool
+c1 = and2
+c2 = or2
