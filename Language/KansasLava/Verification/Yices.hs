@@ -21,20 +21,17 @@ yicesCircuit circ iter = do
   return ipc
 
 
-
+debug m = return ()
 
 -- | Generate yices declarations from the reified circuit
 -- mkDecls :: String -> Int -> YicesIPC -> a -> IO ()
 mkDecls prefix iter ipc rc = do
   let inps = concatMap (yPadDecl prefix iter) (theSrcs rc)
-  putStrLn "Inputs"
-  mapM print inps
+  debug $ putStrLn "Inputs" >> mapM print inps
   let cmds = concatMap (yEntDecl prefix iter) (theCircuit rc)
-  putStrLn "Transition"
-  mapM print cmds
+  debug $ putStrLn "Transition" >> mapM print cmds
   let outs = map (yPadOutput prefix iter) (theSinks rc)
-  putStrLn "Outputs"
-  print outs
+  debug $ putStrLn "Outputs" >> print outs
   runCmdsY ipc $ inps ++ cmds ++ outs
 
 
@@ -214,53 +211,88 @@ bounded circ k = do
   ipc <- createYicesPipe "yices" []
   rc <- reifyCircuit circ
   let sorted = sortCirc rc
-  -- putStrLn $ "Circuit: "
-  -- print sorted
+
+  -- Get the property to check
+  prop <- case find (\(OVar _ name,_,_) -> name == "property") (theSinks rc) of
+            Nothing -> error "No property labeled 'property' to check"
+            Just (ovar,_,driver) -> return $ \i -> yExpDriver "bmc" i driver
 
   -- Generate the transisiton system
   res <- mapM (\iter -> mkDecls "bmc" iter ipc sorted) [0..k]
   status <- runCmdsY ipc [STATUS]
   flushY ipc
 
+
   -- Check each base case
-  res <- case find (\(OVar _ name,_,_) -> name == "property") (theSinks rc) of
-           Nothing -> fail "No property found"
-           Just (ovar,_,driver) -> do
-                   putStrLn "Asserting Base Cases"
-                   let assertions = [ASSERT (NOT (yExpDriver "bmc" i driver)) | i <- [0..k]]
-                   mapM print assertions
-                   runCmdsY ipc assertions
-                   checkY ipc
+  runCmdsY ipc [PUSH]
+  let assertions = [ASSERT (NOT (prop i)) | i <- [0..k]]
+  runCmdsY ipc assertions
+  mapM print assertions
+  res <- checkY ipc
   baseCheck <- case res of
-                 UnSat _ -> return True
-                 InCon _ -> return True
+                 UnSat _ -> do
+                          debug $ putStrLn "Unsat"
+                          return True
+                 InCon _ -> do
+                          debug $ putStrLn "Inconsistent"
+                          return True
                  Sat maxsat -> do
-                   putStrLn "Base Case Violating Model"
+                   putStrLn "Base Case Violating Model:"
                    print maxsat
                    return False
 
+  runCmdsY ipc [POP]
   unless baseCheck $ fail "Base step failed"
   putStrLn "Base Step succeeded"
 
+  putStrLn "Asserting LoopFree"
+  loopAsserts <- loopFree "bmc" k rc
+  runCmdsY ipc loopAsserts
+  res <- checkY ipc
+  case res of
+    UnSat _ -> fail "Induction depth exceeds memory depth"
+    _ -> return ()
+  debug $ putStrLn "Loopfree assertions" >> print loopAsserts
 
-  putStrLn "Checking LoopFree"
-  loopFree "bmc" k rc
+  putStrLn "Checking inductive case"
+  let assumptions = [ASSERT (prop i) | i <- [0..k-1]]
+  print res
 
+
+  -- Create a step transition.
+  mkDecls "bmc" (k+1) ipc sorted
+
+  -- check the induction step
+
+  runCmdsY ipc [PUSH,ASSERT (NOT (prop (k+1)))]
+  -- res <- checkY ipc
+  -- case res of
+  --   Sat model -> do
+  --            putStrLn "Property fails with model:"
+  --            print model
+  --   _ -> do
+  --     putStrLn "Inductive step succeeded"
+
+  runCmdsY ipc [POP,DUMP]
+
+  print res
   exitY ipc
   return ()
 
 
 loopFree prefix k rc = do
     let asserts = pw chk [0..k]
-    print asserts
+    return (concat asserts)
   where pw f [] = []
         pw f (i:is) = map (f i) is ++ pw f is
-        chk i j = sameState prefix i j rc
+        chk i j = differentState prefix i j rc
 
 
-sameState prefix i j rc =
-    [ASSERT (var i idx o  :/= var j idx o) |
+differentState prefix i j rc =
+    [ASSERT (NOT (var i idx o := var j idx o)) |
      (idx,Entity (Name "Memory" "register") [(o,oty)] _ _) <- theCircuit rc]
   where var iter idx o = VarE $ toYicesName prefix iter o idx
 
 
+
+-- bneq a b = AND [a, NOT b]
