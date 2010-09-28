@@ -15,23 +15,23 @@ yicesCircuit :: Ports a =>  a -> Int  -> IO YicesIPC
 yicesCircuit circ iter = do
   ipc <- createYicesPipe "yices" []
   rc <- reifyCircuit circ
-  res <- mapM (\iter -> mkDecls "p0" iter ipc (sortCirc rc)) [0..iter]
+  res <- mapM (\iter -> mkDecls True "p0" iter ipc (sortCirc rc)) [0..iter]
   status <- runCmdsY ipc [STATUS]
   print status
   return ipc
 
 
-debug m = return ()
+debug m = m -- return ()
 
 -- | Generate yices declarations from the reified circuit
 -- mkDecls :: String -> Int -> YicesIPC -> a -> IO ()
-mkDecls prefix iter ipc rc = do
+mkDecls def prefix iter ipc rc = do
   let inps = concatMap (yPadDecl prefix iter) (theSrcs rc)
   debug $ putStrLn "Inputs" >> mapM print inps
-  let cmds = concatMap (yEntDecl prefix iter) (theCircuit rc)
+  let cmds = concatMap (yEntDecl def prefix iter) (theCircuit rc)
   debug $ putStrLn "Transition" >> mapM print cmds
   let outs = map (yPadOutput prefix iter) (theSinks rc)
-  debug $ putStrLn "Outputs" >> print outs
+  debug $ putStrLn "Outputs" >> mapM print outs
   runCmdsY ipc $ inps ++ cmds ++ outs
 
 
@@ -51,10 +51,19 @@ yPadOutput prefix iter (OVar idx name, ty, driver) =
   DEFINE (toYicesName prefix iter name 0, ytyp ty) (Just (yExpDriver prefix iter driver))
 
 -- | Generate the declaration for a single entity
-yEntDecl prefix iter  (nodeid,ent@(Entity nm outs ins _)) =
-  [DEFINE (toYicesName prefix iter port nodeid,ytyp oty) (Just $ yexp nodeid prefix iter ent)
+-- def is a bool that determines whether you should generate definitions
+-- for delays
+yEntDecl False prefix iter
+           (nodeid, Entity (Name "Memory" "register") outs ins _) =
+             [DEFINE (toYicesName prefix iter port nodeid,ytyp oty)
+                     Nothing
+              | (port, oty) <- outs]
+yEntDecl _ prefix iter  (nodeid,ent@(Entity nm outs ins _)) =
+  [DEFINE (toYicesName prefix iter port nodeid,ytyp oty)
+            (Just $ yexp nodeid prefix iter ent)
    | (port, oty) <- outs]
-yEntDecl _ _ (_,ent) = error $ show ent
+
+yEntDecl _ _ _ (_,ent) = error $ show ent
 
 
 test :: Comb Int -> Comb Int -> Comb Int
@@ -163,8 +172,8 @@ equivCheck c1 c2 = do
   putStrLn "Circuit 2:"
   print $ theCircuit rc2
 
-  res1 <- mkDecls "c0" 0 ipc (sortCirc rc1)
-  res2 <- mkDecls "c1" 0 ipc (sortCirc rc2)
+  res1 <- mkDecls True "c0" 0 ipc (sortCirc rc1)
+  res2 <- mkDecls True "c1" 0 ipc (sortCirc rc2)
 
 
   -- For each output, assert that they're different
@@ -207,7 +216,7 @@ c3 env i  = (output "value" reg,output "property" prop)
 c1' a b = (output "value" c, output "property" (or2 c (bitNot c)))
   where c = c1 a b
 
-bounded circ k = do
+kind circ k = do
   ipc <- createYicesPipe "yices" []
   rc <- reifyCircuit circ
   let sorted = sortCirc rc
@@ -215,10 +224,10 @@ bounded circ k = do
   -- Get the property to check
   prop <- case find (\(OVar _ name,_,_) -> name == "property") (theSinks rc) of
             Nothing -> error "No property labeled 'property' to check"
-            Just (ovar,_,driver) -> return $ \i -> yExpDriver "bmc" i driver
+            Just (ovar,_,driver) -> return $ \i -> yExpDriver "kind" i driver
 
   -- Generate the transisiton system
-  res <- mapM (\iter -> mkDecls "bmc" iter ipc sorted) [0..k]
+  res <- mapM (\iter -> mkDecls True "kind" iter ipc sorted) [0..k]
   status <- runCmdsY ipc [STATUS]
   flushY ipc
 
@@ -241,47 +250,58 @@ bounded circ k = do
                    print maxsat
                    return False
 
-  runCmdsY ipc [POP]
+
   unless baseCheck $ fail "Base step failed"
   putStrLn "Base Step succeeded"
+  runCmdsY ipc [POP]
+
+
+  -- Induction step
+  putStrLn "Beginning Induction Step"
+  runCmdsY ipc [PUSH] -- Start new context
+
+  -- We need to declare outputs for some beginning iteration.
+  let n = k + 1
+  mkDecls False "kind" n ipc sorted
+
+  -- Create a step transition.
+  mapM (\iter -> mkDecls True "kind" iter ipc sorted) [n+1..n+k]
+
 
   putStrLn "Asserting LoopFree"
-  loopAsserts <- loopFree "bmc" k rc
+  loopAsserts <- loopFree "kind" n k rc
+  debug $ putStrLn "Loopfree assertions" >> print loopAsserts
   runCmdsY ipc loopAsserts
   res <- checkY ipc
   case res of
     UnSat _ -> fail "Induction depth exceeds memory depth"
     _ -> return ()
-  debug $ putStrLn "Loopfree assertions" >> print loopAsserts
-
-  putStrLn "Checking inductive case"
-  let assumptions = [ASSERT (prop i) | i <- [0..k-1]]
   print res
 
+  putStrLn "Checking inductive case"
+  -- Add the assumptions
+  let assumptions = [ASSERT (prop i) | i <- [n..n+k-1]]
+  debug $ putStrLn "assumptions" >> print assumptions
+  runCmdsY ipc assumptions
 
-  -- Create a step transition.
-  mkDecls "bmc" (k+1) ipc sorted
+  -- check the induction
+  runCmdsY ipc [ASSERT (NOT (prop (n +k)))]
+  res <- checkY ipc
+  case res of
+     Sat model -> do
+              putStrLn "Property fails with model:"
+              print model
+     _ -> do putStrLn "Inductive step succeeded"
 
-  -- check the induction step
-
-  runCmdsY ipc [PUSH,ASSERT (NOT (prop (k+1)))]
-  -- res <- checkY ipc
-  -- case res of
-  --   Sat model -> do
-  --            putStrLn "Property fails with model:"
-  --            print model
-  --   _ -> do
-  --     putStrLn "Inductive step succeeded"
-
-  runCmdsY ipc [POP,DUMP]
+  -- runCmdsY ipc [POP,DUMP]
 
   print res
   exitY ipc
   return ()
 
 
-loopFree prefix k rc = do
-    let asserts = pw chk [0..k]
+loopFree prefix n k rc = do
+    let asserts = pw chk [n..k]
     return (concat asserts)
   where pw f [] = []
         pw f (i:is) = map (f i) is ++ pw f is
