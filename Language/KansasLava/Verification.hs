@@ -1,8 +1,8 @@
 module Language.KansasLava.Verification
   (
-   module Language.KansasLava.Verification.Yices
+   module Language.KansasLava.Verification.SMTLIB
   )
   where
 
-import Language.KansasLava.Verification.Yices
+import Language.KansasLava.Verification.SMTLIB
 

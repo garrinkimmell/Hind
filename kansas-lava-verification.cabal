@@ -16,32 +16,28 @@ Cabal-Version:       >= 1.6
 
 Flag all
   Description: Enable full development tree
-  Default:     False
+  Default:     True
 
 Library
   Build-Depends: base >= 4 && < 5, containers, data-reify == 0.5, pretty,
-                 directory, random,
-                 kansas-lava, sized-types, yices==0.0.0.7
+                 directory, random, data-default,
+                 kansas-lava, sized-types,
+                 smt-lib
 
-  Exposed-modules: Language.KansasLava.Verification.Yices,
-                   Language.KansasLava.Verification
+  Ghc-Options: -Werror -O2
+  Exposed-modules: Language.KansasLava.Verification
 
-  Other-modules:
+  Other-modules:  Language.KansasLava.Verification.SMTLIB
 
 -- hack for now
 --  Hs-Source-Dirs:
-  Ghc-Options:  -Wall -O2
+--   Ghc-Options:  -Wall -O2
 --  Ghc-Prof-options:  -auto-all
 
--- Executable kansas-lava-test1
---     if flag(all)
---       Build-Depends: base, QuickCheck >= 2.0
---       buildable: True
---       Other-modules:
---     else
---       Build-depends: base
---       buildable: False
---     Main-Is:        Main.hs
---     Hs-Source-Dirs: ., tests/test1
---     Ghc-Options: -Wall
+-- Executable verification-test
+--        buildable: True
+--        Build-depends: kansas-lava, smt-lib
+--        Extra-libraries: yices
+--        Main-Is:        Main.hs
+--        Ghc-Options: -Wall
 
