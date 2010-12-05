@@ -20,14 +20,17 @@ Flag all
 
 Library
   Build-Depends: base >= 4 && < 5, containers, data-reify == 0.5, pretty,
-                 directory, random, data-default,
+                 directory, random, data-default, process,
                  kansas-lava, sized-types,
                  smt-lib
 
-  Ghc-Options: -Werror -O2
+  Ghc-Options: -Wall -Werror -O2
   Exposed-modules: Language.KansasLava.Verification
 
   Other-modules:  Language.KansasLava.Verification.SMTLIB
+                  Language.KansasLava.Verification.Interaction
+                  Language.KansasLava.Verification.KInduction
+
 
 -- hack for now
 --  Hs-Source-Dirs:
