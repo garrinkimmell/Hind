@@ -46,12 +46,22 @@ makeProver cmd = do
                                  (hClose pipe_in)
                                  writer
 
+
+  let readLines = do
+        rdy <- hWaitForInput pipe_out 50
+        if rdy
+          then do
+            cur <- hGetLine pipe_out
+            rest <- readLines
+            return (cur ++ rest)
+          else return []
   let reader = do
-        cnts <- hGetLine pipe_out
-        -- cnts <- readLines
+        -- cnts <- hGetLine pipe_out
+        cnts <- readLines
         unless (null cnts) $ do
                  -- putStrLn $ "Got Response " ++ cnts
                  let parsedResponses = parseResponses cnts
+
                  mapM_ (writeChan rspChannel) parsedResponses
         reader
   readerThd <- forkIO $ bracket_ (return ())
@@ -69,8 +79,11 @@ closeProver prover = do
 
 sendCommand :: Prover -> Command -> IO Command_response
 sendCommand prover cmd = do
+  -- putStrLn $ "Req: " ++ show cmd
   writeChan (requests prover) cmd
-  readChan (responses prover)
+  rsp <- readChan (responses prover)
+  -- putStrLn $ "Rsp: " ++ show rsp
+  return rsp
 
 -- | Check satisfiability
 checkSat :: Prover -> IO Status
@@ -95,14 +108,12 @@ push i = flip sendCommand (Push i)
 pop i = flip sendCommand $ (Pop i)
 
 -- | Get the current model
-getModel :: Prover -> [Term] -> IO Command_response
-getModel prover terms = do
-  print (Get_value terms)
-  res <- sendCommand prover (Get_value terms)
+getModel :: Prover -> IO Command_response
+getModel prover= do
+  let model_cmd = (Get_info (Info_flag "model"))
+  res <- sendCommand prover model_cmd
   print res
   return res
-
-
 
 
 {-

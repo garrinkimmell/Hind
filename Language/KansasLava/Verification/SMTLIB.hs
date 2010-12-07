@@ -18,10 +18,14 @@ smtCircuit circ = script
   where stmts = mkDecls sorted
         script = Script (options ++ timeVar ++ stmts)
         sorted = sortCirc circ
-        options = [Set_logic "QF_BV"]
+        options = [] -- [Set_logic "QF_AUFBVNIA"]
                    -- , Set_info (Attribute_s_expr "smt-lib-version"
                    --              (S_expr_constant (Spec_constant_string "2.0")))]
-        timeVar = [Declare_fun "n" [] nat]
+        timeVar = [Declare_fun "n" [] nat,
+                   Assert (Term_qual_identifier_ (Qual_identifier (Identifier ">="))
+                                                   [Term_qual_identifier (Qual_identifier (Identifier "n"))
+                                                   ,Term_spec_constant (Spec_constant_numeral 0)])
+                  ]
 
 
 -- | writeSMTCircuit takes a Lava circuit, reifies it, and writes the SMTLib format to the given file name.
@@ -50,6 +54,7 @@ sortCirc rc = rc { theCircuit = circ }
 -- mkDecls :: Circuit -> [Command]
 mkDecls :: Circuit -> [Command]
 mkDecls circ = concatMap (mkInput "v") (theSrcs circ) ++
+               concatMap (declareEntity "v") (theCircuit circ) ++
                concatMap (defineEntity "v") (theCircuit circ) ++
                map (mkOutput "v") (theSinks circ)
 
@@ -64,17 +69,38 @@ mkOutput prefix (OVar _ n, ty, driver) =
   Define_fun n [Sorted_var "step" nat] (smtType ty) (curStep (smtDriver prefix ty driver))
 
 
+
+declareEntity _ (_,Entity (Prim "Env") _ _ _) = [] -- Filter out 'Envs'
+declareEntity prefix (nodeid,ent@(Entity _ outs _ _)) =
+  [Declare_fun (entName prefix nodeid port) [nat] (smtType ty) | (port,ty) <- outs]
+
+
 defineEntity :: (Show t, Show t1, Show t2) =>
      [Char] -> (t, Entity Type t2 t1) -> [Command]
 defineEntity _ (_,Entity (Prim "Env") _ _ _) = [] -- Filter out 'Envs'
 defineEntity prefix (nodeid, (Entity (Prim "register") [(port,ty)] [("def",defTy,defDriver), ("i0",iTy,idriver), _] [])) =
-  [Define_fun (entName prefix nodeid port) [Sorted_var "step" nat] (smtType ty)
-                (ifThenElse (var "step" .== (num 0)) (smtDriver prefix defTy defDriver) (prevStep (smtDriver prefix iTy idriver)))]
+    [Assert (Term_forall [(Sorted_var "step" nat)] (fn .== tm))]
+  where fn = Term_qual_identifier_ (Qual_identifier (Identifier (entName prefix nodeid port)))
+               [Term_qual_identifier (Qual_identifier (Identifier "step"))]
+        tm = (ifThenElse (var "step" .== (num 0)) (smtDriver prefix defTy defDriver) (prevStep (smtDriver prefix iTy idriver)))
+
+
+
+  -- [Define_fun (entName prefix nodeid port) [Sorted_var "step" nat] (smtType ty)
+  --               (ifThenElse (var "step" .== (num 0)) (smtDriver prefix defTy defDriver) (prevStep (smtDriver prefix iTy idriver)))]
 
 
 defineEntity prefix (nodeid,ent@(Entity _ outs _ _)) =
-  [Define_fun (entName prefix nodeid port) [Sorted_var "step" nat] (smtType ty) (smtEnt prefix nodeid ent)
-   | (port,ty) <- outs]
+  [Assert (Term_forall [(Sorted_var "step" nat)] (fn port .== tm))
+    | (port,ty) <- outs]
+
+  -- [Define_fun (entName prefix nodeid port) [Sorted_var "step" nat] (smtType ty) (smtEnt prefix nodeid ent)
+  --  | (port,ty) <- outs]
+
+  where fn port = Term_qual_identifier_ (Qual_identifier (Identifier (entName prefix nodeid port)))
+                  [Term_qual_identifier (Qual_identifier (Identifier "step"))]
+        tm = (smtEnt prefix nodeid ent)
+
 
 
 
@@ -90,38 +116,67 @@ smtDriver _ _ (Pad (OVar _ n)) = var n
 smtDriver _ _ (ClkDom dom) = var dom
 smtDriver _ B (Lit (RepValue [WireVal True])) = var "true"
 smtDriver _  B (Lit (RepValue [WireVal False])) = var "false"
-smtDriver _ _ (Lit (RepValue vals)) = Term_spec_constant $ Spec_constant_binary (bools vals)
+-- FIXME: This is z3 specific syntax
+-- smtDriver _ (U s) (Lit (RepValue vals)) = Term_qual_identifier (Qual_identifier (Identifier vstr))
+--   where vstr = "bvbin" ++ (bv vals) ++ "[" ++ show s ++ "]"
+-- smtDriver _ (S s) (Lit (RepValue vals)) = Term_qual_identifier (Qual_identifier (Identifier vstr))
+--   where vstr = "bvbin" ++ (bv vals) ++ "[" ++ show s ++ "]"
+
+smtDriver _ _ (Lit (RepValue vals)) = Term_spec_constant $ Spec_constant_binary (reverse $ bools vals)
   where bools [] = []
         bools ((WireVal v):vs) = v:(bools vs)
         bools (WireUnknown:_) =
           error "smtDriver: Can't generate a lit with unknown values"
 
-
 smtDriver _ _ driver = error $ "smtDriver: " ++ show driver
+
+bv [] = []
+bv ((WireVal True):ws) = '1':(bv ws)
+bv ((WireVal False):ws) = '0':(bv ws)
+bv _ = error "Can't print unknown wire value"
+
+
+
 
 
 smtEnt
   :: (Show t1, Show t2) => [Char] -> t -> Entity Type t2 t1 -> Term
+smtEnt prefix _ (Entity nm [(_,os)] [("i0", ity0, d0), ("i1", ity1, d1),("i2",ity2,d2)] _)
+  | Just operator <- lookupOp nm [ity0,ity1,ity2,os] ternOps =
+           operator (smtDriver prefix ity0 d0) (smtDriver prefix ity1 d1) (smtDriver prefix ity2 d2)
+
 smtEnt prefix _ (Entity nm [(_,os)] [("i0", ity0, d0), ("i1", ity1, d1)] _)
   | Just operator <- lookupOp nm [ity0,ity1,os] binOps =
            (smtDriver prefix ity0 d0) `operator` (smtDriver prefix ity1 d1)
 smtEnt prefix _ (Entity nm [(_,os)] [("i0", ity0, d0)] _)
   | Just operator <- lookupOp nm [ity0,os] unOps = operator (smtDriver prefix ity0 d0)
+
+
+
 smtEnt prefix _ (Entity (Label _) [(_,_)] [(_, ity, d0)] _) =
    curStep (smtDriver prefix ity d0)
 
 smtEnt _ _ e = error $  "smtEnt: unhandled case" ++ show e
 
 
-
+ternOps :: [(Id,[Type]->Bool, Term -> Term -> Term -> Term)]
+ternOps = [(Name "Lava" "mux2", muxType, ite)]
+  where ite a b c = Term_qual_identifier_
+                      (Qual_identifier (Identifier "ite"))
+                      [curStep a, curStep b, curStep c]
 
 binOps :: [(Id, [Type] -> Bool, Term -> Term -> Term)]
 binOps = [(Name "Lava" "and2", boolBin,bop "and"),
           (Name "Lava" "or2", boolBin, bop "or"),
-          (Name "Lava" "+", signedBin, bop "bvsadd"),
-          (Name "Lava" "+", unsignedBin, bop "bvuadd"),
+          (Name "Lava" "xor2", boolBin, bop "xor"),
+          (Name "Lava" ".==.", boolBin, bop "="),
+          (Name "Lava" "+", signedBin, bop "bvadd"),
+          (Name "Lava" "+", unsignedBin, bop "bvadd"),
           (Name "Lava" ".>=.", signedComp, bop "bvsge"),
-          (Name "Lava" ".>=.", unsignedComp, bop "bvuge")
+          (Name "Lava" ".>=.", unsignedComp, bop "bvuge"),
+          (Name "Lava" ".<.", signedComp, bop "bvslt"),
+          (Name "Lava" ".<.", unsignedComp, bop "bvult")
+
 
          ]
   where bop i x y =
@@ -166,10 +221,19 @@ unsignedComp [(U x),(U y),B] = x == y
 unsignedComp _ = False
 
 
+muxType :: [Type] -> Bool
+muxType [B,a,b,c] = a == b && b == c
+muxType _ = False
+
+
 
 -- | Get the driver at the current step
 curStep :: Term -> Term
-curStep (Term_qual_identifier q) = (Term_qual_identifier_ q [var "step"])
+curStep t@(Term_qual_identifier q@(Qual_identifier (Identifier nm)))
+         | nm `elem` special = t
+         | otherwise = (Term_qual_identifier_ q [var "step"])
+   where special = ["true","false"]
+
 curStep t@(Term_spec_constant _) = t
 curStep i = error $ "curstep" ++ show i
 
@@ -191,6 +255,11 @@ smtType (S s) =
   (Sort_identifiers (Identifier "_")
    [Sort_identifier (Identifier "BitVec"),
     Sort_identifier (Identifier (show s))])
+smtType (U s) =
+  (Sort_identifiers (Identifier "_")
+   [Sort_identifier (Identifier "BitVec"),
+    Sort_identifier (Identifier (show s))])
+
 smtType ClkDomTy = (Sort_identifier (Identifier "ClockDomain"))
 smtType ty = error $ "smtType: " ++ show ty
 
