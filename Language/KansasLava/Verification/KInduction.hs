@@ -1,11 +1,10 @@
 module Language.KansasLava.Verification.KInduction
-  (checkCircuit, checkCircuitPar) where
+  (checkCircuit, checkCircuitPar, parCheck) where
 
 
 import Language.KansasLava
 import Language.KansasLava.Verification.SMTLIB
 import Language.KansasLava.Verification.Interaction
-
 import Language.SMTLIB
 import Control.Exception
 import Control.Monad
@@ -13,7 +12,6 @@ import Control.Concurrent
 
 -- For testing
 import Data.Sized.Unsigned
-
 
 
 parCheck proverCmd model property = do
@@ -87,13 +85,14 @@ checkCircuitPar  proverCmd circuit property =do
 
 
 checkCircuit :: (Ports a) => String -> a -> String -> IO (Maybe Numeral)
-checkCircuit proverCmd circuit property =
-  bracket (makeProver proverCmd) closeProver $ \p -> do
-
-  -- Create the model for the circuit
+checkCircuit proverCmd circuit property = do
   rc <- reifyCircuit circuit
-  -- print rc
   let Script model = smtCircuit rc
+  seqCheck proverCmd model property
+
+
+seqCheck proverCmd model property = do
+  bracket (makeProver proverCmd) closeProver $ \p -> do
   when debug $ do
     putStrLn "Model"
     print $ Script model
