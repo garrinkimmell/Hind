@@ -16,7 +16,7 @@ import Data.List(find)
 smtCircuit :: Circuit -> Script
 smtCircuit circ = script
   where stmts = mkDecls sorted
-        script = Script (options ++ timeVar ++ stmts)
+        script = Script (options ++ timeVar ++ stmts ++ trans)
         sorted = sortCirc circ
         options = [] -- [Set_logic "QF_AUFBVNIA"]
                    -- , Set_info (Attribute_s_expr "smt-lib-version"
@@ -26,6 +26,9 @@ smtCircuit circ = script
                                                    [Term_qual_identifier (Qual_identifier (Identifier "n"))
                                                    ,Term_spec_constant (Spec_constant_numeral 0)])
                   ]
+
+
+        trans = mkTrans "v" circ
 
 
 -- | writeSMTCircuit takes a Lava circuit, reifies it, and writes the SMTLib format to the given file name.
@@ -55,8 +58,24 @@ sortCirc rc = rc { theCircuit = circ }
 mkDecls :: Circuit -> [Command]
 mkDecls circ = concatMap (mkInput "v") (theSrcs circ) ++
                concatMap (declareEntity "v") (theCircuit circ) ++
+               map (declareOutput "v") (theSinks circ) ++
                concatMap (defineEntity "v") (theCircuit circ) ++
-               map (mkOutput "v") (theSinks circ)
+               map (defineOutput "v") (theSinks circ)
+
+
+mkTrans prefix circ =
+  [Define_fun "trans" [Sorted_var "step" nat] Sort_bool
+              conjunct]
+  where ts =
+          [curStep (var ("trans-" ++ (entName prefix nodeid port))) |
+           (nodeid,ent@(Entity name ports _ _)) <- theCircuit circ,
+          (port,ty) <- ports, okName name]
+        os = [curStep (var ("trans-" ++ n)) | (OVar _ n, ty,_) <- theSinks circ]
+
+        conjunct = Term_qual_identifier_ (Qual_identifier (Identifier "and"))
+                   (ts ++ os)
+        okName (Prim "Env") = False
+        okName _ = True
 
 
 mkInput :: String -> (OVar, Type) -> [Command]
@@ -64,10 +83,16 @@ mkInput _ (_,ClkTy) = []
 mkInput _ (_,ClkDomTy) = []
 mkInput _ (OVar _ n,ty) = [Declare_fun n [nat] (smtType ty)]
 
-mkOutput :: (Show t) => [Char] -> (OVar, Type, Driver t) -> Command
-mkOutput prefix (OVar _ n, ty, driver) =
-  Define_fun n [Sorted_var "step" nat] (smtType ty) (curStep (smtDriver prefix ty driver))
 
+declareOutput prefix (OVar _ n, ty, _) =
+  Declare_fun n [nat] (smtType ty)
+
+defineOutput :: (Show t) => [Char] -> (OVar, Type, Driver t) -> Command
+defineOutput prefix (OVar _ n, ty, driver) =
+  Define_fun ("trans-" ++ n) [Sorted_var "step" nat] Sort_bool
+               (fn .== curStep (smtDriver prefix ty driver))
+    where fn = Term_qual_identifier_ (Qual_identifier (Identifier n))
+                  [Term_qual_identifier (Qual_identifier (Identifier "step"))]
 
 
 declareEntity _ (_,Entity (Prim "Env") _ _ _) = [] -- Filter out 'Envs'
@@ -79,24 +104,22 @@ defineEntity :: (Show t, Show t1, Show t2) =>
      [Char] -> (t, Entity Type t2 t1) -> [Command]
 defineEntity _ (_,Entity (Prim "Env") _ _ _) = [] -- Filter out 'Envs'
 defineEntity prefix (nodeid, (Entity (Prim "register") [(port,ty)] [("def",defTy,defDriver), ("i0",iTy,idriver), _] [])) =
-    [Assert (Term_forall [(Sorted_var "step" nat)] (fn .== tm))]
+    [Define_fun ("trans-" ++ (entName prefix nodeid port))
+               [(Sorted_var "step" nat)] Sort_bool  (fn .== tm)]
   where fn = Term_qual_identifier_ (Qual_identifier (Identifier (entName prefix nodeid port)))
                [Term_qual_identifier (Qual_identifier (Identifier "step"))]
         tm = (ifThenElse (var "step" .== (num 0)) (smtDriver prefix defTy defDriver) (prevStep (smtDriver prefix iTy idriver)))
-
-
 
   -- [Define_fun (entName prefix nodeid port) [Sorted_var "step" nat] (smtType ty)
   --               (ifThenElse (var "step" .== (num 0)) (smtDriver prefix defTy defDriver) (prevStep (smtDriver prefix iTy idriver)))]
 
 
 defineEntity prefix (nodeid,ent@(Entity _ outs _ _)) =
-  [Assert (Term_forall [(Sorted_var "step" nat)] (fn port .== tm))
-    | (port,ty) <- outs]
-
-  -- [Define_fun (entName prefix nodeid port) [Sorted_var "step" nat] (smtType ty) (smtEnt prefix nodeid ent)
-  --  | (port,ty) <- outs]
-
+  -- [Assert (Term_forall [(Sorted_var "step" nat)] (fn port .== tm))
+  --   | (port,ty) <- outs]
+  [Define_fun ("trans-" ++ entName prefix nodeid port)
+   [Sorted_var "step" nat] Sort_bool
+     (fn port .== (smtEnt prefix nodeid ent))  | (port,ty) <- outs]
   where fn port = Term_qual_identifier_ (Qual_identifier (Identifier (entName prefix nodeid port)))
                   [Term_qual_identifier (Qual_identifier (Identifier "step"))]
         tm = (smtEnt prefix nodeid ent)
