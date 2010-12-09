@@ -165,7 +165,7 @@ seqCheck proverCmd model property = do
   return result
 
   where maxStep = 10
-        debug = False
+        debug = True
 
 
 
@@ -186,11 +186,7 @@ base propName k =
         ps =  [(prop idx) | idx <- [0..k-1]]
 
         trans i = Term_qual_identifier_ (Qual_identifier (Identifier "trans"))
-                     [prev i]
-        prev j = Term_qual_identifier_ (Qual_identifier (Identifier "-"))
-                    [Term_qual_identifier (Qual_identifier (Identifier nvar)),
-                     Term_spec_constant (Spec_constant_numeral j)]
-        nvar = "n"
+                     [Term_spec_constant (Spec_constant_numeral i)]
 
 
 -- | Assertions for the step case
