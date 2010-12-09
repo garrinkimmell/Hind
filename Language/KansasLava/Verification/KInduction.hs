@@ -171,11 +171,13 @@ seqCheck proverCmd model property = do
 
 -- | Assertions for the base case
 base :: String -> Numeral -> [Command]
-base propName k = case ps of
-                    [p] -> [Assert p]
-                    _ -> [Assert $
-                          Term_qual_identifier_ (Qual_identifier (Identifier "or"))
-                          ps]
+base propName k =
+  [Assert $ trans i | i <- [0..k]] ++
+  case ps of
+    [p] -> [Assert p]
+    _ -> [Assert $
+          Term_qual_identifier_ (Qual_identifier (Identifier "or"))
+          ps]
 
   where prop i =
           Term_qual_identifier_ (Qual_identifier (Identifier "not"))
@@ -183,13 +185,24 @@ base propName k = case ps of
                     [Term_spec_constant (Spec_constant_numeral i)]]
         ps =  [(prop idx) | idx <- [0..k-1]]
 
+        trans i = Term_qual_identifier_ (Qual_identifier (Identifier "trans"))
+                     [prev i]
+        prev j = Term_qual_identifier_ (Qual_identifier (Identifier "-"))
+                    [Term_qual_identifier (Qual_identifier (Identifier nvar)),
+                     Term_spec_constant (Spec_constant_numeral j)]
+        nvar = "n"
+
 
 -- | Assertions for the step case
 step :: String -> Numeral -> [Command]
 step propName k =
-  [Assert (prop idx) | idx <- [1..k]] ++ [Assert kstep]
+  [Assert (prop idx) | idx <- [1..k]] ++
+  [Assert (trans idx) | idx <- [0..k]] ++
+  [Assert kstep]
     where prop i = Term_qual_identifier_ (Qual_identifier (Identifier propName))
                    [prev i]
+          trans i = Term_qual_identifier_ (Qual_identifier (Identifier "trans"))
+                     [prev i]
           prev j = Term_qual_identifier_ (Qual_identifier (Identifier "-"))
                     [Term_qual_identifier (Qual_identifier (Identifier nvar)),
                      Term_spec_constant (Spec_constant_numeral j)]
