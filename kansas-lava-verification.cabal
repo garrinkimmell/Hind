@@ -24,7 +24,8 @@ Library
                  kansas-lava, sized-types,
                  smt-lib
 
-  Ghc-Options: -Wall -Werror -O2
+  Ghc-Options: -threaded -O2
+-- -Wall -Werror -O2
   Exposed-modules: Language.KansasLava.Verification
 
   Other-modules:  Language.KansasLava.Verification.SMTLIB
@@ -37,10 +38,9 @@ Library
 --   Ghc-Options:  -Wall -O2
 --  Ghc-Prof-options:  -auto-all
 
--- Executable verification-test
---        buildable: True
---        Build-depends: kansas-lava, smt-lib
---        Extra-libraries: yices
---        Main-Is:        Main.hs
---        Ghc-Options: -Wall
+Executable prover
+       buildable: True
+       Build-depends: kansas-lava, smt-lib
+       Main-Is:        Main.hs
+       Ghc-Options:  -threaded -O2
 
