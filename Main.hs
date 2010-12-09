@@ -15,7 +15,7 @@ time a = do
     v <- a
     end   <- getCPUTime
     let diff = (fromIntegral (end - start)) / (10^12)
-    printf "Computation time: %0.3f sec\n" (diff :: Double)
+    printf "Computation time: %0.6f sec\n" (diff :: Double)
     return v
 
 main = do
@@ -26,8 +26,11 @@ main = do
          putStrLn "Working..."
          let scr@(Script model) = parseScript cnts
          putStrLn $ show scr
-         printf "Prover command is %s\n" proverCmd
-         parCheck proverCmd model property
+         putStrLn "Parallel Check"
+         time $ sequence_ $ replicate 1 $ parCheck proverCmd model property
+         putStrLn "Sequential Check"
+         time $ sequence_ $ replicate 1 $ seqCheck proverCmd model property
+
          return ()
 
     _ -> putStrLn "usage: a.out <prover command> <model file> <property>"
