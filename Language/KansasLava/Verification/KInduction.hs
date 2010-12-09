@@ -1,5 +1,5 @@
 module Language.KansasLava.Verification.KInduction
-  (checkCircuit, checkCircuitPar, parCheck) where
+  (checkCircuit, checkCircuitPar, parCheck, seqCheck) where
 
 
 import Language.KansasLava
@@ -43,6 +43,7 @@ data ProverResult = BasePass Integer | BaseFail Integer | StepPass Integer | Ste
 
 baseProcess proverCmd model property resultChan = forkIO $
   bracket (makeProver proverCmd) closeProver $ \p -> do
+    putStrLn "Base Prover Started"
     _ <- mapM (sendCommand p) model
     let loop k = do
           push 1 p
@@ -60,6 +61,7 @@ baseProcess proverCmd model property resultChan = forkIO $
 
 stepProcess proverCmd model property resultChan = forkIO $
   bracket (makeProver proverCmd) closeProver $ \p -> do
+    putStrLn "Step Prover Started"
     _ <- mapM (sendCommand p) model
     let loop k = do
           push 1 p
