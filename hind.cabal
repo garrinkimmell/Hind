@@ -1,15 +1,12 @@
-Name:               kansas-lava-verification
+Name:               hind
 Version:            0.3
-Synopsis:           A verification extension for Kansas Lava, for interacting
-                    with automated proof tools.
-                     &#169; 2009 The University of Kansas; BSD3 license.
+Synopsis:           A SMT-based model checker, using k-induction.
 Category:            Language
 License:             BSD3
 License-file:        LICENSE
 Author:              Garrin Kimmell
 Maintainer:          Garrin Kimmell <garrin.kimmell@gmail.com>
 Copyright:           (c) 2010 The University of Iowa
--- Homepage:            http://ittc.ku.edu/~andygill/kansas-lava.php
 Stability:	     alpha
 build-type: 	     Simple
 Cabal-Version:       >= 1.6
@@ -21,26 +18,20 @@ Flag all
 Library
   Build-Depends: base >= 4 && < 5, containers, data-reify == 0.5, pretty,
                  directory, random, data-default, process,
-                 kansas-lava, sized-types,
                  smt-lib
 
   Ghc-Options: -threaded -O2
 -- -Wall -Werror -O2
-  Exposed-modules: Language.KansasLava.Verification
-
-  Other-modules:  Language.KansasLava.Verification.SMTLIB
-                  Language.KansasLava.Verification.Interaction
-                  Language.KansasLava.Verification.KInduction
-
+  Exposed-modules: Hind.KInduction, Hind.Interaction
 
 -- hack for now
 --  Hs-Source-Dirs:
 --   Ghc-Options:  -Wall -O2
 --  Ghc-Prof-options:  -auto-all
 
-Executable prover
+Executable hind
        buildable: True
-       Build-depends: kansas-lava, smt-lib
+       Build-depends: smt-lib
        Main-Is:        Main.hs
        Ghc-Options:  -threaded -O2
 
