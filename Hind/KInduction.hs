@@ -23,7 +23,7 @@ parCheck proverCmd model property = do
                           return True
             StepFail k -> loop basePass
 
-    result <- loop 0
+    result <- loop 1
     if result
        then putStrLn "Passed" >> return Nothing
        else putStrLn "Failed" >> return Nothing
@@ -153,7 +153,7 @@ seqCheck proverCmd model property = do
 -- | Assertions for the base case
 base :: String -> Numeral -> [Command]
 base propName k =
-  [Assert $ trans i | i <- [0..k]] ++
+  [Assert $ trans i | i <- [0..k-1]] ++
   case ps of
     [p] -> [Assert p]
     _ -> [Assert $
@@ -173,8 +173,8 @@ base propName k =
 -- | Assertions for the step case
 step :: String -> Numeral -> [Command]
 step propName k =
-  [Assert (prop idx) | idx <- [1..k]] ++
-  [Assert (trans idx) | idx <- [0..k]] ++
+  [Assert (prop idx) | idx <- [1..k-1]] ++
+  [Assert (trans idx) | idx <- [0..k-1]] ++
   [Assert kstep]
     where prop i = Term_qual_identifier_ (Qual_identifier (Identifier propName))
                    [prev i]
@@ -221,50 +221,6 @@ distinctState svars indices =
   [distincts svars i j | (i,j) <- indices]
 
 
-
-
--- Test Cases
-{-
-c1' a b = (c, output "aprop" (and2 c (bitNot c)))
-  where c = c1 a b
-c1 :: Seq Bool -> Seq Bool -> Seq Bool
-c1 = and2
-
-
-accum :: Seq U8 -> (Seq U8, Seq Bool)
-accum i = (sum, output "aprop" (sum .<. 7))
-  where r = register 0 sum
-        sum = r + mux2 (i .<. 3) (i,0)
-
-c2 :: Seq U8 -> (Seq U8, Seq Bool)
--- c2 :: Comb U8 -> Comb U8
-c2 i = (o, output "aprop" (i .<. 7))
-  where o = mux2 low (i,i)
-
-
-toggle :: Seq Bool -> Seq Bool
-toggle change = out
-  where out' = register low out
-        out = xor2 change out'
-
-delayN 0 init inp = inp
-delayN n init inp = out
-  where out = register init rest
-        rest = delayN (n-1) init inp
-
-puls n = out
-  where out = delayN (n-1) low last
-        last = register high out
-
-prop_toggle_vs_puls :: Int -> (Seq Bool, Seq Bool, Seq Bool)
-prop_toggle_vs_puls n = (out1, out2, output "aprop" ok)
-  where
-    out1 = toggle high
-    out2 = puls n
-    ok = (bitNot (out1 .==. out2))
-    -- ok = bitNot high
-
--}
 -- Installation for testing
 z3 :: [Char]
 z3 = "ssh teme z3/bin/z3 -si -smt2 MODEL=true"

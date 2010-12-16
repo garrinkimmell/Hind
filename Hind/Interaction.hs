@@ -59,7 +59,7 @@ makeProver cmd = do
         -- cnts <- hGetLine pipe_out
         cnts <- readLines
         unless (null cnts) $ do
-                 -- putStrLn $ "Got Response " ++ cnts
+                 putStrLn $ "Got Response " ++ cnts
                  let parsedResponses = parseResponses cnts
 
                  mapM_ (writeChan rspChannel) parsedResponses
@@ -79,10 +79,10 @@ closeProver prover = do
 
 sendCommand :: Prover -> Command -> IO Command_response
 sendCommand prover cmd = do
-  -- putStrLn $ "Req: " ++ show cmd
+  putStrLn $ "Req: " ++ show cmd
   writeChan (requests prover) cmd
   rsp <- readChan (responses prover)
-  -- putStrLn $ "Rsp: " ++ show rsp
+  putStrLn $ "Rsp: " ++ show rsp
   return rsp
 
 -- | Check satisfiability

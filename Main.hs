@@ -25,8 +25,8 @@ main = do
          putStrLn "Working..."
          let scr@(Script model) = parseScript cnts
          putStrLn $ show scr
-         putStrLn "Parallel Check"
-         time $ sequence_ $ replicate 1 $ parCheck proverCmd model property
+         -- putStrLn "Parallel Check"
+         -- time $ sequence_ $ replicate 1 $ parCheck proverCmd model property
          putStrLn "Sequential Check"
          time $ sequence_ $ replicate 1 $ seqCheck proverCmd model property
 
