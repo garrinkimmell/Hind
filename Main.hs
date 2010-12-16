@@ -33,21 +33,13 @@ main = do
 
          return ()
 
-    _ -> putStrLn "usage: a.out <prover command> <model file> <property>"
-
-{-
-
-    putStrLn "Starting Parallel..."
-    time $ (checkCircuitPar z3 (prop_toggle_vs_puls 2)  "aprop")
-    putStrLn "Done."
-    putStrLn "Starting Sequential..."
-    time $ (checkCircuit z3 (prop_toggle_vs_puls 2)  "aprop")
-    putStrLn "Done."
--}
+    _ -> putStrLn "usage: prover <prover command> <model file> <property>"
 
 
 z3 :: [Char]
 z3 = "ssh teme z3/bin/z3 -si -smt2 MODEL=true"
+
+{-
 toggle :: Seq Bool -> Seq Bool
 toggle change = out
   where out' = register low out
@@ -69,3 +61,4 @@ prop_toggle_vs_puls n = (out1, out2, output "aprop" ok)
     out2 = puls n
     ok = (bitNot (out1 .==. out2))
     -- ok = bitNot high
+-}
