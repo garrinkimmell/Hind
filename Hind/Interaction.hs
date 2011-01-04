@@ -25,15 +25,17 @@ data Prover = Prover { requests :: Chan Command
 -- Create a prover connection
 makeProver :: String -> IO Prover
 makeProver cmd = do
-  (pipe_in,pipe_out,pipe_err,ph) <- runInteractiveCommand cmd
+
+  (pipe_in,pipe_out,pipe_err,ph) <-   {-# SCC "runInteractiveCommand" #-} runInteractiveCommand cmd
   hSetBinaryMode pipe_in False
 
   hSetBinaryMode pipe_out False
   hSetBinaryMode pipe_err False
 
   -- Create input/output channels
-  reqChannel <- newChan
-  rspChannel <- newChan
+  reqChannel <- {-# SCC "newChanReq" #-} newChan
+  rspChannel <- {-# SCC "newChanRsp" #-} newChan
+
 
   -- Fork off processes for interaction
   let writer = do
@@ -42,16 +44,17 @@ makeProver cmd = do
         hFlush pipe_in
         writer
 
-  writerThd <- forkIO $ bracket_ (return ())
-                                 (hClose pipe_in)
-                                 writer
+  writerThd <-   {-# SCC "forkWriter" #-}
+    forkIO $ bracket_ (return ())
+             (hClose pipe_in)
+             writer
 
 
   let readLines = do
-        rdy <- hWaitForInput pipe_out 50
+        rdy <- {-# SCC "waitForInput" #-} hWaitForInput pipe_out 0
         if rdy
           then do
-            cur <- hGetLine pipe_out
+            cur <- {-# SCC "getLine" #-} hGetLine pipe_out
             rest <- readLines
             return (cur ++ rest)
           else return []
@@ -59,14 +62,15 @@ makeProver cmd = do
         -- cnts <- hGetLine pipe_out
         cnts <- readLines
         unless (null cnts) $ do
-                 putStrLn $ "Got Response " ++ cnts
-                 let parsedResponses = parseResponses cnts
-
-                 mapM_ (writeChan rspChannel) parsedResponses
+                   -- putStrLn $ "Got Response " ++ cnts
+                   let parsedResponses =  parseResponses cnts
+                   mapM_ (writeChan rspChannel)  parsedResponses
         reader
-  readerThd <- forkIO $ bracket_ (return ())
-                                 (hClose pipe_out)
-                                 reader
+
+  readerThd <-   {-# SCC "forkReader" #-}
+    forkIO $ bracket_ (return ())
+             (hClose pipe_out)
+             reader
 
   return $ Prover reqChannel rspChannel [readerThd,writerThd] ph
 
@@ -79,10 +83,10 @@ closeProver prover = do
 
 sendCommand :: Prover -> Command -> IO Command_response
 sendCommand prover cmd = do
-  putStrLn $ "Req: " ++ show cmd
+  --putStrLn $ "Req: " ++ show cmd
   writeChan (requests prover) cmd
   rsp <- readChan (responses prover)
-  putStrLn $ "Rsp: " ++ show rsp
+  --putStrLn $ "Rsp: " ++ show rsp
   return rsp
 
 -- | Check satisfiability

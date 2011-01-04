@@ -5,17 +5,41 @@ import Hind.KInduction
 import Text.Printf
 import Control.Exception
 import System.CPUTime
+import Data.Time
 import System.Environment
+
 import Language.SMTLIB
+
+import Criterion.Main (defaultMain, bench)
+import Criterion.Config
 
 time :: IO t -> IO t
 time a = do
+    wallStart <- getCurrentTime
     start <- getCPUTime
     v <- a
     end   <- getCPUTime
+    wallEnd <- getCurrentTime
     let diff = (fromIntegral (end - start)) / (10^12)
     printf "Computation time: %0.6f sec\n" (diff :: Double)
+    printf "Wall time: %0.6f sec\n"
+             ((fromRational $toRational $ diffUTCTime wallEnd wallStart) :: Double)
     return v
+
+
+
+
+main' = do
+  args <- getArgs
+  case args of
+    (proverCmd:modelFile:property:rest) ->
+      do cnts <- readFile modelFile
+         putStrLn "Working..."
+         let scr@(Script model) = parseScript cnts
+         withArgs rest $
+	          defaultMain [bench "parallel" $ parCheck proverCmd model property
+                              ,bench "sequential" $ seqCheck proverCmd model property]
+
 
 main = do
   args <- getArgs
@@ -24,11 +48,11 @@ main = do
       do cnts <- readFile modelFile
          putStrLn "Working..."
          let scr@(Script model) = parseScript cnts
-         putStrLn $ show scr
-         -- putStrLn "Parallel Check"
-         -- time $ sequence_ $ replicate 1 $ parCheck proverCmd model property
+         -- putStrLn $ show scr
+         putStrLn "Parallel Check"
+         time $  parCheck proverCmd model property
          putStrLn "Sequential Check"
-         time $ sequence_ $ replicate 1 $ seqCheck proverCmd model property
+         time $  seqCheck proverCmd model property
 
          return ()
 

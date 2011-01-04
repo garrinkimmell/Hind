@@ -139,14 +139,14 @@ seqCheck proverCmd model property = do
                return Nothing -- loop (k+1)
 
   result <- loop 1
-  when debug $
+  when True $
        case result of
          Just k -> putStrLn $ "Proved at step " ++ show k
          Nothing -> putStrLn $ "Failed to prove"
   return result
 
   where maxStep = 10
-        debug = True
+        debug = False
 
 
 
