@@ -31,7 +31,7 @@ Library
 
 Executable hind
        buildable: True
-       Build-depends: smt-lib, criterion, time
+       Build-depends: smt-lib, time
        Main-Is:        Main.hs
        Ghc-Options:  -threaded -O2
 

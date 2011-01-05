@@ -10,8 +10,17 @@ import Control.Concurrent
 
 parCheck proverCmd model property = do
     resultChan <- newChan
-    baseProc <- baseProcess proverCmd model property resultChan
-    stepProc <- stepProcess proverCmd model property resultChan
+
+
+    -- Inferred invariants will show up on the invChan
+    invChan <- newChan
+    invGenProc <- invGenProcess proverCmd model property invChan
+    let invChanBase = invChan
+    invChanBase <- dupChan invChan
+    invChanStep <- dupChan invChan
+
+    baseProc <- baseProcess proverCmd model property resultChan invChanBase
+    stepProc <- stepProcess proverCmd model property resultChan invChanStep
     let loop basePass = do
           res <- readChan resultChan
           putStrLn $ show res
@@ -28,18 +37,20 @@ parCheck proverCmd model property = do
        then putStrLn "Passed" >> return Nothing
        else putStrLn "Failed" >> return Nothing
 
+    -- Clean up all the threads
+    -- mapM_ killThread [invGenProc,baseProc,stepProc]
     return ()
 
 
 
 data ProverResult = BasePass Integer | BaseFail Integer | StepPass Integer | StepFail Integer deriving Show
 
-
-baseProcess proverCmd model property resultChan = forkIO $
+baseProcess proverCmd model property resultChan invChan = forkIO $
   bracket (makeProver proverCmd) closeProver $ \p -> do
     putStrLn "Base Prover Started"
     _ <- mapM (sendCommand p) model
     let loop k = do
+          checkInvariant p invChan
           push 1 p
           let baseCmds = base property k
           _ <- mapM_ (sendCommand p) baseCmds
@@ -53,11 +64,12 @@ baseProcess proverCmd model property resultChan = forkIO $
                  writeChan resultChan (BaseFail k)
     loop 1
 
-stepProcess proverCmd model property resultChan = forkIO $
+stepProcess proverCmd model property resultChan invChan = forkIO $
   bracket (makeProver proverCmd) closeProver $ \p -> do
     putStrLn "Step Prover Started"
     _ <- mapM (sendCommand p) model
     let loop k = do
+          checkInvariant p invChan
           push 1 p
           let stepCmds = step property k
           _ <- mapM_ (sendCommand p) stepCmds
@@ -219,6 +231,50 @@ distincts svars i j = Assert $
 distinctState :: [Symbol] -> [(Numeral, Numeral)] -> [Command]
 distinctState svars indices =
   [distincts svars i j | (i,j) <- indices]
+
+
+-- Invariant Generation
+invGenProcess proverCmd model property invChan = forkIO $ do
+  basePassed <- newChan
+  baseProc <- invGenBaseProcess proverCmd model property basePassed
+  stepProc <- invGenStepProcess proverCmd model property basePassed invChan
+  return ()
+
+assertTrue = Assert (Term_qual_identifier (Qual_identifier (Identifier "true")))
+
+invGenBaseProcess proverCmd model property sink = forkIO $
+  {-# SCC "invGenBaseProcess" #-}
+  bracket (makeProver proverCmd) closeProver $ \p -> do
+    let loop = do
+          writeChan sink assertTrue
+          threadDelay 10000000 -- Sleep 100 milliseconds
+          loop
+    loop
+    return ()
+
+invGenStepProcess proverCmd model property source sink = forkIO $
+  {-# SCC "invGenStepProcess" #-}
+  bracket (makeProver proverCmd) closeProver $ \p -> do
+    let loop = do
+          c <- readChan source
+          threadDelay 10000000 -- Sleep 100 milliseconds
+          writeChan sink c
+          loop
+
+    loop
+    return ()
+
+
+checkInvariant prover invChan = do
+  empty <- isEmptyChan invChan
+  unless empty $ do
+    inv <- readChan invChan
+    putStrLn "Got an invariant"
+    _ <- sendCommand prover inv
+    return ()
+
+
+
 
 
 -- Installation for testing

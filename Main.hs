@@ -10,9 +10,10 @@ import System.Environment
 
 import Language.SMTLIB
 
+{-
 import Criterion.Main (defaultMain, bench)
 import Criterion.Config
-
+-}
 time :: IO t -> IO t
 time a = do
     wallStart <- getCurrentTime
@@ -28,7 +29,7 @@ time a = do
 
 
 
-
+{-
 main' = do
   args <- getArgs
   case args of
@@ -40,7 +41,7 @@ main' = do
 	          defaultMain [bench "parallel" $ parCheck proverCmd model property
                               ,bench "sequential" $ seqCheck proverCmd model property]
 
-
+-}
 main = do
   args <- getArgs
   case args of
@@ -51,8 +52,8 @@ main = do
          -- putStrLn $ show scr
          putStrLn "Parallel Check"
          time $  parCheck proverCmd model property
-         putStrLn "Sequential Check"
-         time $  seqCheck proverCmd model property
+         -- putStrLn "Sequential Check"
+         -- time $  seqCheck proverCmd model property
 
          return ()
 
