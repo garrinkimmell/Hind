@@ -1,0 +1,22 @@
+To build, you need the latest smt-lib package from github installed:
+https://github.com/tomahawkins/smt-lib.
+
+This has been tested with the latest Linux version of z3, which you can download
+at the bottom of
+http://research.microsoft.com/en-us/um/redmond/projects/z3/download.html
+
+
+To run, execute "hind <smt-cmd> <transition-file> <property>"
+
+For example, assuming that you have z3 installed in your path on a machine named
+'host',
+
+> hind  "ssh host z3 -si -smt2 MODEL=true" test/two_counters.smt2 P
+
+Will check the property 'P' defined in the transition system in the file found
+at test/two_counters.smt2. The SMT solver will run on the named host. If you
+have the solver installed locally, you can forgo the 'ssh host' bit.
+
+The solver requires that the transition system must have a macro named 'trans'.
+
+
