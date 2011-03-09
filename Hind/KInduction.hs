@@ -274,18 +274,15 @@ invGenBaseProcess proverCmd transitionSystem stateVars sink = forkIO $
   {-# SCC "invGenBaseProcess" #-}
   bracket (makeProverNamed proverCmd "invGenBase") closeProver $ \p -> do
     mapM_ (sendCommand p) transitionSystem
-    -- putStrLn $ "Initial Candidate"
-    -- print $ candidate [stateVars] "implies" 1
-    -- send '(trans 1)'
     sendCommand p (Assert
                    (Term_qual_identifier_ (Qual_identifier (Identifier "trans"))
-                        [Term_spec_constant (Spec_constant_numeral 1)]))
+                        [Term_spec_constant (Spec_constant_numeral 0)]))
 
     -- send the initial candidate set
 
-    let rfmnt classes = do
+    let refinement classes = do
           -- putStrLn "Start refinement iteration"
-          let cs = [candidate classes "implies" 1]
+          let cs = [candidate classes "<=" 1]
           putStrLn $ "Checking invariant candidate " ++ show cs
           push 1 p
           sendCommand p
@@ -302,9 +299,9 @@ invGenBaseProcess proverCmd transitionSystem stateVars sink = forkIO $
                  putStrLn "Invariant Candidate Not Valid"
                  next <- valuation p stateVars 1
                  pop 1 p
-                 unless (next == classes) $ rfmnt next
+                 unless (next == classes) $ refinement next
 
-    rfmnt [stateVars]
+    refinement [stateVars]
 
 
     -- Generate the initial candidates
