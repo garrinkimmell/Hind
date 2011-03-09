@@ -1,5 +1,5 @@
 (properties P)
-(state ___z6z___ ___z7z___)
+(state ___z8z___ ___z9z___ ___z10z___)
 (transition trans)
 
 
@@ -21,8 +21,17 @@
 			; V40_a ;  LOCAL,STATE(1,)/106
 (declare-fun ___z7z___ (Int) Bool)
 			; V41_b ;  LOCAL,STATE(1,)/107
+
 (declare-fun ___z8z___ (Int) Int)
 			; V51_time ;  LOCAL,STATE(1,)/108
+
+; For some testing
+(declare-fun ___z9z___ (Int) Int)
+			; V51_time ;  LOCAL,STATE(1,)/108
+
+(declare-fun ___z10z___ (Int) Int)
+			; V51_time ;  LOCAL,STATE(1,)/108
+
 
 
 ; ; Generic definitions:
@@ -31,7 +40,16 @@
  (define-fun DEF__105 ((_M Int)) Bool (= (___z5z___ _M) (= (___z8z___ _M) 2)))
  (define-fun DEF__106 ((_M Int)) Bool (= (___z6z___ _M) (ite (= _M _base) false (not (___z7z___ (- _M 1))))))
  (define-fun DEF__107 ((_M Int)) Bool (= (___z7z___ _M) (ite (= _M _base) false (___z6z___ (- _M 1)))))
- (define-fun DEF__108 ((_M Int)) Bool (= (___z8z___ _M) (ite (= _M _base) 0 (ite (= (___z8z___ (- _M 1)) 3) 0 (+ (___z8z___ (- _M 1)) 1)))))
+ (define-fun DEF__108 ((_M Int)) Bool (= (___z8z___ _M)
+   (ite (= _M _base) 0 (ite (= (___z8z___ (- _M 1)) 3) 0 (+ (___z8z___ (- _M 1)) 1)))))
+
+
+; Invariant generation testing
+(define-fun DEF__109 ((_M Int)) Bool (= (___z9z___ _M) (+ (___z8z___ _M) 1)))
+(define-fun DEF__110 ((_M Int)) Bool (= (___z9z___ _M) (___z10z___ _M)))
+
+; (define-fun DEF__110 ((_M Int)) Bool (= (___z10z___ _M) (+ (___9z___ _M) 1)))
+
 
  (define-fun P ((_M Int)) Bool (___z3z___ _M))
  (define-fun trans ((_M Int)) Bool
@@ -40,5 +58,9 @@
  	    	 (DEF__105 _M)
  	    	 (DEF__106 _M)
  	    	 (DEF__107 _M)
- 	    	 (DEF__108 _M)))
+ 	    	 (DEF__108 _M)
+
+				 (DEF__109 _M)
+				 (DEF__110 _M)
+				 ))
 

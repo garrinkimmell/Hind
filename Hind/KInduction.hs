@@ -38,6 +38,11 @@ parCheck proverCmd model property stateVars = do
        then putStrLn "Passed" >> return Nothing
        else putStrLn "Failed" >> return Nothing
 
+
+    -- Delay, just so that we can let invariant generation catch up.
+    threadDelay 1000000
+
+
     -- Clean up all the threads
     mapM_ killThread [invGenProc,baseProc,stepProc]
     return ()
@@ -273,54 +278,103 @@ assertTrue = Assert (Term_qual_identifier (Qual_identifier (Identifier "true")))
 invGenBaseProcess proverCmd transitionSystem stateVars sink = forkIO $
   {-# SCC "invGenBaseProcess" #-}
   bracket (makeProverNamed proverCmd "invGenBase") closeProver $ \p -> do
+
+    -- Initialize the prover with the transition system
     mapM_ (sendCommand p) transitionSystem
-    sendCommand p (Assert
-                   (Term_qual_identifier_ (Qual_identifier (Identifier "trans"))
-                        [Term_spec_constant (Spec_constant_numeral 0)]))
 
-    -- send the initial candidate set
+    -- 'loop' is the outer loop, increasing 'k'
+    let loop candidate k = do
+          sendCommand p (Assert
+                         (Term_qual_identifier_ (Qual_identifier (Identifier "trans"))
+                                                  [Term_spec_constant (Spec_constant_numeral k)]))
+          refinement candidate k
 
-    let refinement classes = do
+        -- 'refinement' searches for an invariant.
+        refinement :: [[String]] -> Integer -> IO ()
+        refinement classes k = do
+
           -- putStrLn "Start refinement iteration"
-          let cs = [candidate classes "<=" 1]
-          putStrLn $ "Checking invariant candidate " ++ show cs
+          let candidateConjunction = candidate classes "<=" (k_time k)
+          -- putStrLn $ "Checking invariant candidate " ++ show candidateConjunction
           push 1 p
+          -- negate the candidate
           sendCommand p
-            (Assert (Term_qual_identifier_ (Qual_identifier (Identifier "not")) cs))
-          -- putStrLn "Checking for UNSAT"
+            (Assert (Term_qual_identifier_ (Qual_identifier (Identifier "not")) [candidateConjunction]))
           valid <- isUnsat p
           if valid
                then do
-                 putStrLn "(Base Valid) Invariant:"
-                 print classes
+                 -- putStrLn $ show k ++ " (Base Valid) Invariant:"
+                 -- print classes
                  pop 1 p
-                 return ()
+                 -- Assert the invariant for k
+                 sendCommand p (Assert candidateConjunction)
+                 -- Pass the candidate order to the step process
+                 writeChan sink (k,classes)
+                 loop classes (k+1)
+
                else do
-                 putStrLn "Invariant Candidate Not Valid"
-                 next <- valuation p stateVars 1
+                 -- putStrLn "Invariant Candidate Not Valid"
+                 -- 'next' is a partition of the candidates
+                 next <- valuation p stateVars (k_time k)
                  pop 1 p
-                 unless (next == classes) $ refinement next
+                 -- stop when no further refinement is possible
+                 unless (next == classes) $ refinement next k
 
-    refinement [stateVars]
+
+    -- start running the process
+    loop [stateVars] 0
 
 
-    -- Generate the initial candidates
 
-    let loop = do
-          writeChan sink assertTrue
-          threadDelay 10000000 -- Sleep 100 milliseconds
-          loop
-    loop
-    return ()
-
-invGenStepProcess proverCmd model property source sink = forkIO $
+invGenStepProcess proverCmd transitionSystem stateVars source sink = forkIO $
   {-# SCC "invGenStepProcess" #-}
-  bracket (makeProver proverCmd) closeProver $ \p -> do
+  bracket (makeProverNamed proverCmd "invStep") closeProver $ \p -> do
+    -- Initialize the prover with the transition system
+    mapM_ (sendCommand p) transitionSystem
+
+    -- time i = (n - i)
+    let time i = Term_qual_identifier_ (Qual_identifier (Identifier "-"))
+                   [Term_qual_identifier (Qual_identifier (Identifier "n")),
+                    Term_spec_constant (Spec_constant_numeral i)]
     let loop = do
-          c <- readChan source
-          threadDelay 10000000 -- Sleep 100 milliseconds
-          writeChan sink c
-          loop
+          push 1 p
+          -- Get a k-base-valid candidate
+          (k,classes) <- readChan source
+          putStrLn "InvStep read candidate"
+          print classes
+          -- set up the transition system
+          mapM_ (sendCommand p)
+                -- trans (n-i)
+                [Assert (Term_qual_identifier_ (Qual_identifier (Identifier "trans")) [time i])
+                 | i <- [0..k+1]]
+
+          refinement classes k
+
+        -- start the refinement process
+        refinement cs k = do
+          push 1 p
+          -- Assert the induction hypothesis for previous k+1 steps
+          mapM_ (sendCommand p)
+                [Assert (candidate cs "<=" (time i))
+                 | i <- [1..k+1]]
+          -- Assert the negated candidate
+          sendCommand p (Assert (Term_qual_identifier_ (Qual_identifier (Identifier "not"))
+                                      [(candidate cs "<=" (time 0))]))
+          valid <- isUnsat p
+          if valid
+             then do
+               putStrLn $ "Found a valid invariant (" ++ show k ++ ")"
+               print cs
+               pop 2 p
+               writeChan sink cs
+               loop
+             else do
+               putStrLn "Invariant Candidate not valid"
+               next <- valuation p stateVars (time 0)
+               pop 1 p
+               if (next == cs)
+                    then loop
+                    else refinement next k
 
     loop
     return ()
@@ -334,8 +388,12 @@ checkInvariant prover invChan = do
     _ <- sendCommand prover inv
     return ()
 
+
+k_time k = Term_spec_constant (Spec_constant_numeral k)
+
 -- | Given an equivalence, (over a partial order) generate a candidate invariant.
-candidate equivClasses rel k =
+candidate :: [[String]] -> String -> Term -> Term
+candidate equivClasses rel time =
   Term_qual_identifier_ (Qual_identifier (Identifier "and"))
                         (concatMap equiv equivClasses ++
                                ineq (map head equivClasses))
@@ -361,26 +419,24 @@ candidate equivClasses rel k =
                                    (Qual_identifier (Identifier s))
                                    [time]]):ineq (s:ts)
 
-        time = Term_spec_constant (Spec_constant_numeral (k-1))
 
-valuation p stateVars k = do
+valuation p stateVars time = do
     Ga_response vals <- sendCommand p (Get_value terms)
 
     let res = zip stateVars vals
         sorted = sortBy (\(_,l) (_,r) -> compare l r) res
         grouped = groupBy (\(_,l) (_,r) -> l == r) sorted
         equiv = map (map fst) grouped
-    putStrLn "Valuation: "
-    print  res
-    putStrLn "Refinement:"
-    print equiv
-    putStrLn "Done with the refinement"
+    -- putStrLn "Valuation: "
+    -- print  res
+    -- putStrLn "Refinement:"
+    -- print equiv
     return equiv
 
 
   where terms = [Term_qual_identifier_ (Qual_identifier (Identifier sv)) [time]
                 | sv <- stateVars]
-        time = Term_spec_constant (Spec_constant_numeral (k-1))
+
 
 -- Installation for testing
 z3 :: [Char]
