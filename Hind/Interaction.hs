@@ -54,18 +54,18 @@ makeProverNamed cmd nm = do
 
   let reader rest = do
         cnts <- hGetLine pipe_out
-        putStrLn $ nm ++ " got a line " ++ cnts
+        -- putStrLn $ nm ++ " got a line " ++ cnts
         let (res,rem) = runParser SMT.responses $ rest ++ (lexSMTLIB cnts)
         case res of
           Left err -> do
             -- putStrLn $ "Parse Error: " ++ show err
             -- putStrLn "with input "
             -- print $ rest ++ (lexSMTLIB  cnts)
-            reader $ rest ++ (lexSMTLIB cnts)
+            return ()
 
           Right val -> do
             mapM_ (writeChan rspChannel) val
-        reader rest
+        reader rem
 
   readerThd <-   {-# SCC "forkReader" #-}
     forkIO $ bracket_ (return ())
@@ -106,8 +106,11 @@ sendCommandDebug prover cmd = do
 -- | Check satisfiability
 checkSat :: Prover -> IO Status
 checkSat prover = do
-  (Cs_response status) <- sendCommand prover Check_sat
-  return status
+  res <- sendCommand prover Check_sat
+  case res of
+    (Cs_response status) -> return status
+    _ -> fail $ show res
+
 
 isSat, isUnsat :: Prover -> IO Bool
 isSat = fmap sat . checkSat
@@ -123,10 +126,7 @@ isUnsat = fmap unsat . checkSat
 -- | Manipulate prover state stack
 push,pop :: Int -> Prover -> IO Command_response
 push i = flip sendCommand (Push i)
-pop i p = do putStrLn "Before pop"
-             r <- sendCommandDebug p (Pop i)
-             putStrLn  "After pop"
-             return r
+pop i = flip sendCommand (Pop i)
 
 
 

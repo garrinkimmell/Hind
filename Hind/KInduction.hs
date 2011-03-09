@@ -26,7 +26,7 @@ parCheck proverCmd model property stateVars = do
     stepProc <- stepProcess proverCmd model property resultChan invChanStep
     let loop basePass = do
           res <- readChan resultChan
-          putStrLn $ show res
+          -- putStrLn $ show res
           case res of
             BasePass k -> loop k
             BaseFail k -> return False
@@ -35,7 +35,7 @@ parCheck proverCmd model property stateVars = do
 
     result <- loop 1
     if result
-       then putStrLn "Passed" >> loop 1 >> return Nothing
+       then putStrLn "Passed" >> return Nothing
        else putStrLn "Failed" >> return Nothing
 
     -- Clean up all the threads
@@ -65,18 +65,6 @@ baseProcess proverCmd model property resultChan invChan = forkIO $
                loop (k+1)
              else do
                writeChan resultChan (BaseFail k)
-
-          -- push 1 p
-          -- let baseCmds = base property k
-          -- _ <- mapM_ (sendCommand p) baseCmds
-          -- res <- isUnsat p
-          -- if res
-          --      then do
-          --        writeChan resultChan (BasePass k)
-          --        pop 1 p
-          --        loop (k+1)
-          --      else do
-          --        writeChan resultChan (BaseFail k)
     loop 1
   where trans i = Term_qual_identifier_ (Qual_identifier (Identifier "trans"))
                     [Term_spec_constant (Spec_constant_numeral i)]
@@ -296,26 +284,25 @@ invGenBaseProcess proverCmd transitionSystem stateVars sink = forkIO $
     -- send the initial candidate set
 
     let rfmnt classes = do
-          putStrLn "Start refinement iteration"
+          -- putStrLn "Start refinement iteration"
           let cs = [candidate classes "implies" 1]
           putStrLn $ "Checking invariant candidate " ++ show cs
           push 1 p
-          sendCommandDebug p
+          sendCommand p
             (Assert (Term_qual_identifier_ (Qual_identifier (Identifier "not")) cs))
-          putStrLn "Checking for UNSAT"
+          -- putStrLn "Checking for UNSAT"
           valid <- isUnsat p
           if valid
                then do
-                 putStrLn "Invariant:"
+                 putStrLn "(Base Valid) Invariant:"
                  print classes
                  pop 1 p
+                 return ()
                else do
-                 putStrLn "Invariant Not Valid"
+                 putStrLn "Invariant Candidate Not Valid"
                  next <- valuation p stateVars 1
-                 print next
-                 putStrLn "shold be looping to new refinement"
                  pop 1 p
-                 rfmnt next
+                 unless (next == classes) $ rfmnt next
 
     rfmnt [stateVars]
 
@@ -380,7 +367,6 @@ candidate equivClasses rel k =
         time = Term_spec_constant (Spec_constant_numeral (k-1))
 
 valuation p stateVars k = do
-    print (Get_value terms)
     Ga_response vals <- sendCommand p (Get_value terms)
 
     let res = zip stateVars vals

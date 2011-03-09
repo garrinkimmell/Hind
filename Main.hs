@@ -1,6 +1,7 @@
 module Main where
 
 import Hind.KInduction
+import Hind.Parser
 
 import Text.Printf
 import Control.Exception
@@ -45,17 +46,18 @@ main' = do
 main = do
   args <- getArgs
   case args of
-    [proverCmd, modelFile, property, stateVars] ->
-      do cnts <- readFile modelFile
-         putStrLn "Working..."
-         let Right (Script trans) = parseScript cnts
-         -- putStrLn $ show scr
-         putStrLn "Parallel Check"
-         time $  parCheck proverCmd trans property (read stateVars)
+    [proverCmd, fname] -> do
+      res <- hindFile fname
+      putStrLn "Parallel Check"
+      let Script trans = hindScript res
+          (Identifier p:_) = hindProperties res
+          states = [i | Identifier i <- hindStates res]
+      time $
+        parCheck proverCmd trans p states
          -- putStrLn "Sequential Check"
          -- time $  seqCheck proverCmd model property
 
-         return ()
+      return ()
 
     _ -> putStrLn "usage: hind <prover command> <model file> <property>"
 
