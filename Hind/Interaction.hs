@@ -1,30 +1,33 @@
 {-# LANGUAGE ScopedTypeVariables, StandaloneDeriving #-}
 module Hind.Interaction
   (Prover,
-   makeProver, closeProver,
-   sendCommand,
+   makeProver, makeProverNamed, closeProver,
+   sendCommand, sendCommandDebug,
    checkSat,isSat,isUnsat,
    push,pop,
    getModel
    ) where
 
-import Language.SMTLIB
+import Language.SMTLIB hiding (responses)
+import qualified Language.SMTLIB as SMT
 import System.Process
 import System.IO
 import Control.Concurrent
 import Control.Exception
 import Control.Monad
+import Text.ParserCombinators.Poly
 
 
 data Prover = Prover { requests :: Chan Command
                      , responses :: Chan Command_response
                      , threads :: [ThreadId]
                      , pid :: ProcessHandle
+                     , name :: String
                      }
 
 -- Create a prover connection
-makeProver :: String -> IO Prover
-makeProver cmd = do
+makeProverNamed :: String -> String -> IO Prover
+makeProverNamed cmd nm = do
 
   (pipe_in,pipe_out,pipe_err,ph) <-   {-# SCC "runInteractiveCommand" #-} runInteractiveCommand cmd
   hSetBinaryMode pipe_in False
@@ -49,30 +52,33 @@ makeProver cmd = do
              (hClose pipe_in)
              writer
 
+  let reader rest = do
+        cnts <- hGetLine pipe_out
+        putStrLn $ nm ++ " got a line " ++ cnts
+        let (res,rem) = runParser SMT.responses $ rest ++ (lexSMTLIB cnts)
+        case res of
+          Left err -> do
+            -- putStrLn $ "Parse Error: " ++ show err
+            -- putStrLn "with input "
+            -- print $ rest ++ (lexSMTLIB  cnts)
+            reader $ rest ++ (lexSMTLIB cnts)
 
-  let readLines = do
-        rdy <- {-# SCC "waitForInput" #-} hWaitForInput pipe_out 0
-        if rdy
-          then do
-            cur <- {-# SCC "getLine" #-} hGetLine pipe_out
-            rest <- readLines
-            return (cur ++ rest)
-          else return []
-  let reader = do
-        -- cnts <- hGetLine pipe_out
-        cnts <- readLines
-        unless (null cnts) $ do
-                   -- putStrLn $ "Got Response " ++ cnts
-                   let parsedResponses =  parseResponses cnts
-                   mapM_ (writeChan rspChannel)  parsedResponses
-        reader
+          Right val -> do
+            mapM_ (writeChan rspChannel) val
+        reader rest
 
   readerThd <-   {-# SCC "forkReader" #-}
     forkIO $ bracket_ (return ())
              (hClose pipe_out)
-             reader
+             (reader [])
 
-  return $ Prover reqChannel rspChannel [readerThd,writerThd] ph
+  return $ Prover reqChannel rspChannel [readerThd,writerThd] ph nm
+
+makeProver :: String -> IO Prover
+makeProver cmd = do
+  makeProverNamed cmd "unknown"
+
+
 
 
 
@@ -83,11 +89,19 @@ closeProver prover = do
 
 sendCommand :: Prover -> Command -> IO Command_response
 sendCommand prover cmd = do
-  --putStrLn $ "Req: " ++ show cmd
   writeChan (requests prover) cmd
   rsp <- readChan (responses prover)
-  --putStrLn $ "Rsp: " ++ show rsp
   return rsp
+
+
+sendCommandDebug :: Prover -> Command -> IO Command_response
+sendCommandDebug prover cmd = do
+  putStrLn $ name prover ++ " req: " ++ show cmd
+  writeChan (requests prover) cmd
+  rsp <- readChan (responses prover)
+  putStrLn $ name prover ++ " rsp: " ++ show rsp
+  return rsp
+
 
 -- | Check satisfiability
 checkSat :: Prover -> IO Status
@@ -109,7 +123,12 @@ isUnsat = fmap unsat . checkSat
 -- | Manipulate prover state stack
 push,pop :: Int -> Prover -> IO Command_response
 push i = flip sendCommand (Push i)
-pop i = flip sendCommand $ (Pop i)
+pop i p = do putStrLn "Before pop"
+             r <- sendCommandDebug p (Pop i)
+             putStrLn  "After pop"
+             return r
+
+
 
 -- | Get the current model
 getModel :: Prover -> IO Command_response

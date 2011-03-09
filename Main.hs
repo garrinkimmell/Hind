@@ -45,13 +45,13 @@ main' = do
 main = do
   args <- getArgs
   case args of
-    [proverCmd, modelFile, property] ->
+    [proverCmd, modelFile, property, stateVars] ->
       do cnts <- readFile modelFile
          putStrLn "Working..."
-         let scr@(Script model) = parseScript cnts
+         let Right (Script trans) = parseScript cnts
          -- putStrLn $ show scr
          putStrLn "Parallel Check"
-         time $  parCheck proverCmd model property
+         time $  parCheck proverCmd trans property (read stateVars)
          -- putStrLn "Sequential Check"
          -- time $  seqCheck proverCmd model property
 
