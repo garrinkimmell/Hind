@@ -52,10 +52,10 @@ makeProverNamed cmd nm = do
              (hClose pipe_in)
              writer
 
-  let reader rest = do
+  let reader rest = {-# SCC "reader" #-} do
         cnts <- hGetLine pipe_out
         -- putStrLn $ nm ++ " got a line " ++ cnts
-        let (res,rem) = runParser SMT.responses $ rest ++ (lexSMTLIB cnts)
+        let (res,rem) = {-# SCC "parser" #-} runParser SMT.responses $ rest ++ (lexSMTLIB cnts)
         case res of
           Left err -> do
             -- putStrLn $ "Parse Error: " ++ show err

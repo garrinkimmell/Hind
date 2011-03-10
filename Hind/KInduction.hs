@@ -1,29 +1,28 @@
 module Hind.KInduction
-  (parCheck, seqCheck) where
+  (parCheck) where
 
-
+import Hind.Parser(HindFile(..))
 import Hind.Interaction
+import Hind.InvGen
 import Language.SMTLIB
 import Control.Exception
 import Control.Monad
 import Control.Concurrent
 import Data.List(sortBy, groupBy)
 
-parCheck :: String -> [Command] -> Symbol -> [String] -> IO ()
-parCheck proverCmd model property stateVars = do
+parCheck :: String -> HindFile -> IO ()
+parCheck proverCmd hindFile = do
     resultChan <- newChan
 
     -- Inferred invariants will show up on the invChan
     invChan <- newChan
-    invGenProc <- invGenProcess proverCmd model property stateVars invChan
+    (invGenBase,invGenStep) <- invGenProcess proverCmd hindFile invChan
     let invChanBase = invChan
     invChanBase <- dupChan invChan
     invChanStep <- dupChan invChan
 
-    -- baseProc <- forkIO $ return ()
-    -- stepProc <- forkIO $ return ()
-    baseProc <- baseProcess proverCmd model property resultChan invChanBase
-    stepProc <- stepProcess proverCmd model property resultChan invChanStep
+    baseProc <- baseProcess proverCmd hindFile resultChan invChanBase
+    stepProc <- stepProcess proverCmd hindFile resultChan invChanStep
     let loop basePass = do
           res <- readChan resultChan
           -- putStrLn $ show res
@@ -38,20 +37,21 @@ parCheck proverCmd model property stateVars = do
        then putStrLn "Passed" >> return Nothing
        else putStrLn "Failed" >> return Nothing
 
-
     -- Delay, just so that we can let invariant generation catch up.
     -- threadDelay 1000000
 
-
     -- Clean up all the threads
-    mapM_ killThread [invGenProc,baseProc,stepProc]
+    mapM_ killThread [invGenBase,invGenStep,baseProc,stepProc]
     return ()
 
 
+data ProverResult = BasePass Integer | BaseFail Integer | StepPass Integer | StepFail Integer
+  deriving Show
 
-data ProverResult = BasePass Integer | BaseFail Integer | StepPass Integer | StepFail Integer deriving Show
-
-baseProcess proverCmd model property resultChan invChan = forkIO $
+-- baseProcess proverCmd model property resultChan invChan = forkIO $
+baseProcess
+  :: String -> HindFile -> Chan ProverResult -> Chan POVal -> IO ThreadId
+baseProcess proverCmd hindFile resultChan invChan = forkIO $
   bracket (makeProver proverCmd) closeProver $ \p -> do
     putStrLn "Base Prover Started"
     _ <- mapM (sendCommand p) model
@@ -71,16 +71,19 @@ baseProcess proverCmd model property resultChan invChan = forkIO $
              else do
                writeChan resultChan (BaseFail k)
     loop 1
-  where trans i = Term_qual_identifier_ (Qual_identifier (Identifier "trans"))
+  where trans i = Term_qual_identifier_ (Qual_identifier transition)
                     [Term_spec_constant (Spec_constant_numeral i)]
 
         prop i =
           Term_qual_identifier_ (Qual_identifier (Identifier "not"))
-            [Term_qual_identifier_ (Qual_identifier (Identifier property))
+            [Term_qual_identifier_ (Qual_identifier property)
                     [Term_spec_constant (Spec_constant_numeral i)]]
+        Script model = hindScript hindFile
+        [property] = hindProperties hindFile
+        transition = hindTransition hindFile
 
-
-stepProcess proverCmd model property resultChan invChan = forkIO $
+stepProcess :: String -> HindFile -> Chan ProverResult -> Chan POVal -> IO ThreadId
+stepProcess proverCmd hindFile resultChan invChan = forkIO $
   bracket (makeProver proverCmd) closeProver $ \p -> do
     putStrLn "Step Prover Started"
     _ <- mapM (sendCommand p) model
@@ -104,134 +107,20 @@ stepProcess proverCmd model property resultChan invChan = forkIO $
 
     loop 1
 
-    where prop i = Term_qual_identifier_ (Qual_identifier (Identifier property))
+    where prop i = Term_qual_identifier_ (Qual_identifier  property)
                    [prev i]
-          trans i = Term_qual_identifier_ (Qual_identifier (Identifier "trans"))
+          trans i = Term_qual_identifier_ (Qual_identifier transition)
                      [prev i]
           prev j = Term_qual_identifier_ (Qual_identifier (Identifier "-"))
                     [Term_qual_identifier (Qual_identifier (Identifier nvar)),
                      Term_spec_constant (Spec_constant_numeral j)]
           nvar = "n"
           kstep = Term_qual_identifier_ (Qual_identifier (Identifier "not"))
-                    [Term_qual_identifier_ (Qual_identifier (Identifier property))
+                    [Term_qual_identifier_ (Qual_identifier  property)
                      [Term_qual_identifier (Qual_identifier (Identifier nvar))]]
-
-
-
-
-seqCheck proverCmd model property = do
-  bracket (makeProver proverCmd) closeProver $ \p -> do
-  when debug $ do
-    putStrLn "Model"
-    print $ Script model
-
-  -- Set up the model
-  _ <- mapM (sendCommand p) model
-
-  let loop k
-        | k >= maxStep = return Nothing
-        | otherwise = do
-          when debug $ putStrLn $ "k = " ++ show k
-
-          -- Turn on path compression.
-          -- FIXME: This is incorrect. It needs to be moved, and
-          -- path compression should be an option.
-          when False $ do
-               mapM_ (sendCommand p) (pathCompression [] k)
-
-
-
-          -- Check the base case
-          let baseCmds = base property k
-          push 1 p
-          _ <- mapM (sendCommand p) baseCmds
-          baseSuccess <- isUnsat p
-          pop 1 p
-
-          when debug $ do
-            putStrLn "Base case"
-            print baseCmds
-
-
-          when debug $ putStrLn $ "Base case UNSAT result is " ++ show baseSuccess
-
-          if baseSuccess
-             then do
-               -- Check the step case
-
-               let stepCmds = step property k
-               push 1 p
-               results <- mapM (sendCommand p) stepCmds
-               stepSuccess <- isUnsat p
-               pop 1 p
-
-               when debug $ do
-                    putStrLn "Step case"
-                    print stepCmds
-                    print results
-
-
-               when debug $
-                    putStrLn $ "Step case UNSAT result is " ++ show stepSuccess
-
-               if stepSuccess
-                 then do
-                   return (Just k)
-                 else loop (k+1)
-             else do -- Base failed
-               m <- getModel p
-               putStrLn $ show m
-               return Nothing -- loop (k+1)
-
-  result <- loop 1
-  when True $
-       case result of
-         Just k -> putStrLn $ "Proved at step " ++ show k
-         Nothing -> putStrLn $ "Failed to prove"
-  return result
-
-  where maxStep = 10
-        debug = False
-
-
-
--- | Assertions for the base case
-base :: String -> Numeral -> [Command]
-base propName k =
-  [Assert $ trans i | i <- [0..k-1]] ++
-  case ps of
-    [p] -> [Assert p]
-    _ -> [Assert $
-          Term_qual_identifier_ (Qual_identifier (Identifier "or"))
-          ps]
-
-  where prop i =
-          Term_qual_identifier_ (Qual_identifier (Identifier "not"))
-            [Term_qual_identifier_ (Qual_identifier (Identifier propName))
-                    [Term_spec_constant (Spec_constant_numeral i)]]
-        ps =  [(prop idx) | idx <- [0..k-1]]
-
-        trans i = Term_qual_identifier_ (Qual_identifier (Identifier "trans"))
-                     [Term_spec_constant (Spec_constant_numeral i)]
-
-
--- | Assertions for the step case
-step :: String -> Numeral -> [Command]
-step propName k =
-  [Assert (prop idx) | idx <- [1..k-1]] ++
-  [Assert (trans idx) | idx <- [0..k-1]] ++
-  [Assert kstep]
-    where prop i = Term_qual_identifier_ (Qual_identifier (Identifier propName))
-                   [prev i]
-          trans i = Term_qual_identifier_ (Qual_identifier (Identifier "trans"))
-                     [prev i]
-          prev j = Term_qual_identifier_ (Qual_identifier (Identifier "-"))
-                    [Term_qual_identifier (Qual_identifier (Identifier nvar)),
-                     Term_spec_constant (Spec_constant_numeral j)]
-          nvar = "n"
-          kstep = Term_qual_identifier_ (Qual_identifier (Identifier "not"))
-                    [Term_qual_identifier_ (Qual_identifier (Identifier propName))
-                     [Term_qual_identifier (Qual_identifier (Identifier nvar))]]
+          Script model = hindScript hindFile
+          [property] = hindProperties hindFile
+          transition = hindTransition hindFile
 
 
 
@@ -265,121 +154,6 @@ distinctState :: [Symbol] -> [(Numeral, Numeral)] -> [Command]
 distinctState svars indices =
   [distincts svars i j | (i,j) <- indices]
 
-
--- Invariant Generation
-invGenProcess proverCmd model property stateVars invChan = forkIO $ do
-  basePassed <- newChan
-  baseProc <- invGenBaseProcess proverCmd model stateVars basePassed
-  stepProc <- invGenStepProcess proverCmd model stateVars basePassed invChan
-  return ()
-
-assertTrue = Assert (Term_qual_identifier (Qual_identifier (Identifier "true")))
-
-invGenBaseProcess proverCmd transitionSystem stateVars sink = forkIO $
-  {-# SCC "invGenBaseProcess" #-}
-  bracket (makeProverNamed proverCmd "invGenBase") closeProver $ \p -> do
-
-    -- Initialize the prover with the transition system
-    mapM_ (sendCommand p) transitionSystem
-
-    -- 'loop' is the outer loop, increasing 'k'
-    let loop candidate k = do
-          sendCommand p (Assert
-                         (Term_qual_identifier_ (Qual_identifier (Identifier "trans"))
-                                                  [Term_spec_constant (Spec_constant_numeral k)]))
-          refinement candidate k
-
-        -- 'refinement' searches for an invariant.
-        refinement :: [[String]] -> Integer -> IO ()
-        refinement classes k = do
-
-          -- putStrLn "Start refinement iteration"
-          let candidateConjunction = candidate classes "<=" (k_time k)
-          -- putStrLn $ "Checking invariant candidate " ++ show candidateConjunction
-          push 1 p
-          -- negate the candidate
-          sendCommand p
-            (Assert (Term_qual_identifier_ (Qual_identifier (Identifier "not")) [candidateConjunction]))
-          valid <- isUnsat p
-          if valid
-               then do
-                 -- putStrLn $ show k ++ " (Base Valid) Invariant:"
-                 -- print classes
-                 pop 1 p
-                 -- Assert the invariant for k
-                 sendCommand p (Assert candidateConjunction)
-                 -- Pass the candidate order to the step process
-                 writeChan sink (k,classes)
-                 loop classes (k+1)
-
-               else do
-                 -- putStrLn "Invariant Candidate Not Valid"
-                 -- 'next' is a partition of the candidates
-                 next <- valuation p stateVars (k_time k)
-                 pop 1 p
-                 -- stop when no further refinement is possible
-                 unless (next == classes) $ refinement next k
-
-
-    -- start running the process
-    loop [stateVars] 0
-
-
-
-invGenStepProcess proverCmd transitionSystem stateVars source sink = forkIO $
-  {-# SCC "invGenStepProcess" #-}
-  bracket (makeProverNamed proverCmd "invStep") closeProver $ \p -> do
-    -- Initialize the prover with the transition system
-    mapM_ (sendCommand p) transitionSystem
-
-    -- time i = (n - i)
-    let time i = Term_qual_identifier_ (Qual_identifier (Identifier "-"))
-                   [Term_qual_identifier (Qual_identifier (Identifier "n")),
-                    Term_spec_constant (Spec_constant_numeral i)]
-    let loop = do
-          push 1 p
-          -- Get a k-base-valid candidate
-          (k,classes) <- readChan source
-          -- putStrLn "InvStep read candidate"
-          -- print classes
-          -- set up the transition system
-          mapM_ (sendCommand p)
-                -- trans (n-i)
-                [Assert (Term_qual_identifier_ (Qual_identifier (Identifier "trans")) [time i])
-                 | i <- [0..k+1]]
-
-          refinement classes k
-
-        -- start the refinement process
-        refinement cs k = do
-          push 1 p
-          -- Assert the induction hypothesis for previous k+1 steps
-          mapM_ (sendCommand p)
-                [Assert (candidate cs "<=" (time i))
-                 | i <- [1..k+1]]
-          -- Assert the negated candidate
-          sendCommand p (Assert (Term_qual_identifier_ (Qual_identifier (Identifier "not"))
-                                      [(candidate cs "<=" (time 0))]))
-          valid <- isUnsat p
-          if valid
-             then do
-               putStrLn $ "Found a valid invariant (" ++ show k ++ ")"
-               print cs
-               pop 2 p
-               writeChan sink cs
-               loop
-             else do
-               putStrLn "Invariant Candidate not valid"
-               next <- valuation p stateVars (time 0)
-               pop 1 p
-               if (next == cs)
-                    then loop
-                    else refinement next k
-
-    loop
-    return ()
-
-
 checkInvariant prover invChan = do
   empty <- isEmptyChan invChan
   unless empty $ do
@@ -387,55 +161,6 @@ checkInvariant prover invChan = do
     putStrLn "Got an invariant"
     _ <- sendCommand prover inv
     return ()
-
-
-k_time k = Term_spec_constant (Spec_constant_numeral k)
-
--- | Given an equivalence, (over a partial order) generate a candidate invariant.
-candidate :: [[String]] -> String -> Term -> Term
-candidate equivClasses rel time =
-  Term_qual_identifier_ (Qual_identifier (Identifier "and"))
-                        (concatMap equiv equivClasses ++
-                               ineq (map head equivClasses))
-  where equiv (c:cs) =
-          -- Generate "c(k) = c'(k) for each c in cs
-          [Term_qual_identifier_ (Qual_identifier (Identifier "="))
-                                  [Term_qual_identifier_
-                                   (Qual_identifier (Identifier c))
-                                   [time],
-                                   Term_qual_identifier_
-                                   (Qual_identifier (Identifier c'))
-                                   [time]]
-                                   | c' <- cs]
-        equivalences = concatMap equiv equivClasses
-        ineq [] = []
-        ineq [t] = []
-        ineq (r:s:ts) =
-          (Term_qual_identifier_ (Qual_identifier (Identifier rel))
-                                  [Term_qual_identifier_
-                                   (Qual_identifier (Identifier r))
-                                   [time],
-                                   Term_qual_identifier_
-                                   (Qual_identifier (Identifier s))
-                                   [time]]):ineq (s:ts)
-
-
-valuation p stateVars time = do
-    Ga_response vals <- sendCommand p (Get_value terms)
-
-    let res = zip stateVars vals
-        sorted = sortBy (\(_,l) (_,r) -> compare l r) res
-        grouped = groupBy (\(_,l) (_,r) -> l == r) sorted
-        equiv = map (map fst) grouped
-    -- putStrLn "Valuation: "
-    -- print  res
-    -- putStrLn "Refinement:"
-    -- print equiv
-    return equiv
-
-
-  where terms = [Term_qual_identifier_ (Qual_identifier (Identifier sv)) [time]
-                | sv <- stateVars]
 
 
 -- Installation for testing
@@ -447,28 +172,3 @@ cvc3 = "cvc3 -lang smt2"
 
 
 
-instance Eq Term where
-   (Term_qual_identifier (Qual_identifier (Identifier t1))) ==
-    (Term_qual_identifier (Qual_identifier (Identifier t2))) = t1 == t2
-
-   (Term_spec_constant (Spec_constant_numeral t1)) == (Term_spec_constant (Spec_constant_numeral t2)) = t1 == t2
-
-
-instance Ord Term where
-   (Term_qual_identifier (Qual_identifier (Identifier "true"))) `compare`
-    (Term_qual_identifier (Qual_identifier (Identifier "false"))) = LT
-
-   (Term_qual_identifier (Qual_identifier (Identifier "false"))) `compare`
-    (Term_qual_identifier (Qual_identifier (Identifier "true"))) = GT
-
-   (Term_qual_identifier (Qual_identifier (Identifier "true"))) `compare`
-    (Term_qual_identifier (Qual_identifier (Identifier "true"))) = EQ
-
-   (Term_qual_identifier (Qual_identifier (Identifier "false"))) `compare`
-    (Term_qual_identifier (Qual_identifier (Identifier "false"))) = EQ
-
-   (Term_spec_constant (Spec_constant_numeral t1)) `compare`
-    (Term_spec_constant (Spec_constant_numeral t2)) = t1 `compare` t2
-
-
-   compare t1 t2 = error $ show t1 ++ show t2

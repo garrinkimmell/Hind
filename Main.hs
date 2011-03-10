@@ -28,8 +28,6 @@ time a = do
              ((fromRational $toRational $ diffUTCTime wallEnd wallStart) :: Double)
     return v
 
-
-
 {-
 main' = do
   args <- getArgs
@@ -49,17 +47,10 @@ main = do
     [proverCmd, fname] -> do
       res <- hindFile fname
       putStrLn "Parallel Check"
-      let Script trans = hindScript res
-          (Identifier p:_) = hindProperties res
-          states = [i | Identifier i <- hindStates res]
-      time $
-        parCheck proverCmd trans p states
-         -- putStrLn "Sequential Check"
-         -- time $  seqCheck proverCmd model property
-
+      time $ parCheck proverCmd res
       return ()
 
-    _ -> putStrLn "usage: hind <prover command> <model file> <property>"
+    _ -> putStrLn "usage: hind <prover command> <hind file>"
 
 
 z3 :: [Char]
