@@ -40,7 +40,7 @@ parCheck proverCmd model property stateVars = do
 
 
     -- Delay, just so that we can let invariant generation catch up.
-    threadDelay 1000000
+    -- threadDelay 1000000
 
 
     -- Clean up all the threads
@@ -340,8 +340,8 @@ invGenStepProcess proverCmd transitionSystem stateVars source sink = forkIO $
           push 1 p
           -- Get a k-base-valid candidate
           (k,classes) <- readChan source
-          putStrLn "InvStep read candidate"
-          print classes
+          -- putStrLn "InvStep read candidate"
+          -- print classes
           -- set up the transition system
           mapM_ (sendCommand p)
                 -- trans (n-i)
