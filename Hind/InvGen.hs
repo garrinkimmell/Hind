@@ -71,7 +71,8 @@ invGenBaseProcess proverCmd hindFile sink isDone = forkIO  $
     -- start running the process
     loop initPO 0
   where (Script transitionSystem) = hindScript hindFile
-        initPO = makePO (undefined :: IntPO) [hindStates hindFile]
+        _:initPO:_ = map (uncurry genPO) $ hindStates hindFile
+
         trans = hindTransition hindFile
 
 -- | The refinement process for the step case of invariant generation based on a partial order.
@@ -161,12 +162,18 @@ class PO a where
 
   -- | Get all of the state variables in the partial order.
   vars :: a -> [Identifier]
+  vars = nub . concat . fromPO
 
   -- | Refine a partial order using the given countermodel.
   refine :: [(Identifier,Term)] -> a -> a
+  refine model prev = toPO $ poRefine (fromPO prev) model
 
   -- | Generate a formula (for the given time) for this partial order.
   formula :: a -> Term -> Term
+  formula po time = poFormula (lt po) (fromPO po) time
+
+  -- | The "<=" relation
+  lt :: a -> Identifier
 
 
 -- | POVal is an existential wrapper around a PO
@@ -176,6 +183,12 @@ data POVal = forall a. PO a => POVal a
 makePO :: forall a. PO a => a -> [[Identifier]] -> POVal
 makePO _ ps = POVal (toPO ps :: a)
 
+-- | Create a POVal given a Sort.
+genPO :: Sort -> [Identifier] -> POVal
+genPO (Sort_identifier (Identifier "Int")) svs = makePO (undefined :: IntPO) [svs]
+genPO (Sort_identifier (Identifier "Bool")) svs = makePO (undefined :: BoolPO) [svs]
+genPO Sort_bool svs = makePO (undefined :: BoolPO) [svs]
+
 
 instance PO POVal where
   toPO _ = error "Use makePO, passing a witness of the type you wish to pack"
@@ -183,27 +196,32 @@ instance PO POVal where
   vars (POVal p) = vars p
   refine valuation (POVal p) = POVal (refine valuation p)
   formula (POVal p) = formula p
+  lt (POVal p) = lt p
 
--- |The partial order for integers
--- The inner list corresponds to a equivalence class, the outer list orders the equivalence classes using <=.
+-- | The partial order for integers.  The inner list corresponds to a
+-- equivalence class, the outer list orders the equivalence classes using <=.
 newtype IntPO = IntPO [[Identifier]]
 instance PO IntPO where
   toPO = IntPO
   fromPO (IntPO p) = p
+  lt _ = (Identifier "<=")
 
-  vars (IntPO p) = nub $ concat p
-
-  refine model (IntPO prev) = IntPO
-                  [q | (n,v) <- model
-                  , then group by v -- Sorting is implicit.
-                  , p <- prev -- singleton classes are useless
-                  , q@(_:_) <- [n `intersect` p] -- Make sure there's at least two elements
-                  ]
+  -- vars (IntPO p) = nub $ concat p
+  -- refine model (IntPO prev) = IntPO (poRefine prev model)
+  -- formula (IntPO p) time = poFormula "<=" p time
 
 
-  formula (IntPO p) time =
+newtype BoolPO = BoolPO [[Identifier]]
+instance PO BoolPO where
+  toPO = BoolPO
+  fromPO (BoolPO p) = p
+  lt _ = (Identifier "implies")
+
+-- | Utility functions
+-- poFormula works for a po that is an ordered partition
+poFormula rel partition time =
     Term_qual_identifier_ (Qual_identifier (Identifier "and"))
-                            (equivalences ++ ineq (map head p))
+                            (equivalences ++ ineq (map head partition))
     where -- Generate "c(k) = c'(k) for each c in cs
       equiv (c:cs) =
           [Term_qual_identifier_ (Qual_identifier (Identifier "="))
@@ -215,17 +233,27 @@ instance PO IntPO where
             [time]]
              | c' <- cs]
 
-      equivalences = concatMap equiv p
+      equivalences = concatMap equiv partition
       ineq [] = []
       ineq [t] = []
       ineq (r:s:ts) =
-          (Term_qual_identifier_ (Qual_identifier (Identifier "<="))
+          (Term_qual_identifier_ (Qual_identifier rel)
                                   [Term_qual_identifier_
                                    (Qual_identifier r)
                                    [time],
                                    Term_qual_identifier_
                                    (Qual_identifier s)
                                    [time]]):ineq (s:ts)
+
+-- | Refine a conjecture.
+poRefine prev model = [q | (n,v) <- model
+           , then group by v -- Sorting is implicit.
+           , p <- prev
+           , q@(_:_) <- [n `intersect` p] -- Make sure there's at least one element
+           ]
+
+
+
 
 negateTerm term =
   (Term_qual_identifier_ (Qual_identifier (Identifier "not")) [term])
@@ -259,21 +287,3 @@ instance Ord Term where
 
 
 
-instance Eq Identifier where
-  (Identifier s) == (Identifier s') = s == s'
-  (Identifier_ s ns) == (Identifier_ s' ns') = s == s' && ns == ns'
-  _ == _ = False
-
-
-
-t = [('a',3),('b',1),('c',1),('d',2),('e',3)]
-t' = [('a',3),('b',9),('c',1),('d',2), ('e', 3)]
-
-s = ["abcde"]
-
-u prev model  =
-  [q | (n,v) <- model
-  , then group by v -- The sort is implicit?
-  , p <- prev -- singleton classes are useless
-  , q@(_:_) <- [n `intersect` p] -- Make sure there's at least one element
-  ]

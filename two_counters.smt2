@@ -1,5 +1,4 @@
 (properties P)
-(state ___z8z___ ___z9z___ ___z10z___)
 (transition trans)
 
 

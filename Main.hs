@@ -46,6 +46,7 @@ main = do
   case args of
     [proverCmd, fname] -> do
       res <- hindFile fname
+      print $ genStates (hindScript res)
       putStrLn "Parallel Check"
       time $ parCheck proverCmd res
       return ()
