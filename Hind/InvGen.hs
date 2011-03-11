@@ -5,6 +5,7 @@ import Hind.Parser(HindFile(..))
 import Hind.Interaction
 import Language.SMTLIB
 
+import qualified Data.Set as S
 import Control.Applicative
 import Control.Exception
 import Control.Monad
@@ -87,7 +88,7 @@ invGenBaseProcess proverCmd hindFile source sink isDone = forkIO  $
                then do
                  pop 1 p
                  -- Assert the invariant for k
-                 noticeM "Hind.invGenBase" $
+                 infoM "Hind.invGenBase" $
                     "Verified candidate:" ++ show candidateFormula ++
                      "(" ++ show k ++ ")"
 
@@ -161,7 +162,7 @@ invGenStepProcess proverCmd hindFile source sink isDone  = forkIO $
           valid <- isUnsat p
           if valid
              then do
-               noticeM "Hind.invGenStep" $
+               infoM "Hind.invGenStep" $
                   "Verified candidate" ++ show candidateFormula ++
                   "(" ++ show k ++ ")"
 
@@ -171,7 +172,7 @@ invGenStepProcess proverCmd hindFile source sink isDone  = forkIO $
                      Term_forall [Sorted_var "n" (Sort_identifier (Identifier "integer"))]
                                  (formula po n_term)
                noticeM "Hind.invGenStep" $
-                  "Verified candidate" ++ show inv_formula ++
+                  "Discovered invariant" ++ show inv_formula ++
                   "(" ++ show k ++ ")"
                pop 2 p
                writeChan sink po
@@ -226,27 +227,28 @@ class Show a => PO a where
   -- Each list element represents an equivalence class, and the classes are ordered
   -- according to the partial order <= relation.
   -- Takes a major/minor revision number
-  toPO :: Int -> Int -> [[Identifier]] -> a
+  toPO :: Int -> Int -> Gr Identifier -> a
 
   -- | Convert a partial order to an equivalence relation over state variables.
   -- Each list element represents an equivalence class, and the classes are ordered
   -- according to the partial order <= relation.
-  fromPO :: a -> [[Identifier]]
+  fromPO :: a -> Gr Identifier
 
   -- | Get all of the state variables in the partial order.
   vars :: a -> [Identifier]
-  vars = nub . concat . fromPO
+  vars po = nub $ concatMap snd eq
+   where (eq,_) = fromPO po
 
   -- | Refine a partial order using the given countermodel.
   refine :: [(Identifier,Term)] -> a -> Maybe a
   refine model prev = toPO maj (min+1) <$> next
      where maj = revMajor prev
            min = revMinor prev
-           next = poRefine (fromPO prev) model
+           next = grRefine (fromPO prev) model
 
   -- | Generate a formula (for the given time) for this partial order.
   formula :: a -> Term -> Term
-  formula po time = poFormula (lt po) (fromPO po) time
+  formula po time = grFormula  (fromPO po) (lt po) time
 
   -- | The "<=" relation
   lt :: a -> Identifier
@@ -262,16 +264,16 @@ instance Show POVal where
   show (POVal p) = show p
 
 -- | Create a POVal wrapping a PO of the type of the first argument.
-makePO :: forall a. PO a => a -> Int -> Int -> [[Identifier]] -> POVal
-makePO _ maj min ps = POVal (toPO maj min ps :: a)
+makePO :: forall a. PO a => a -> Int -> Int -> [Identifier] -> POVal
+makePO _ maj min ps = POVal (toPO maj min ([(0,ps)],S.empty) :: a)
 
 -- | Create a POVal given a Sort and major revision number.
 genPO :: Sort -> [Identifier] -> Int -> POVal
 genPO (Sort_identifier (Identifier "Int")) svs maj =
-  makePO (undefined :: IntPO) maj 0 [svs]
+  makePO (undefined :: IntPO) maj 0 svs
 genPO (Sort_identifier (Identifier "Bool")) svs maj =
-  makePO (undefined :: BoolPO) maj 0 [svs]
-genPO Sort_bool svs maj = makePO (undefined :: BoolPO) maj 0  [svs]
+  makePO (undefined :: BoolPO) maj 0 svs
+genPO Sort_bool svs maj = makePO (undefined :: BoolPO) maj 0  svs
 
 
 instance PO POVal where
@@ -286,7 +288,7 @@ instance PO POVal where
 
 -- | The partial order for integers.  The inner list corresponds to a
 -- equivalence class, the outer list orders the equivalence classes using <=.
-data IntPO = IntPO Int Int [[Identifier]] deriving Show
+data IntPO = IntPO Int Int (Gr Identifier) deriving Show
 instance PO IntPO where
   toPO maj min ss = IntPO maj min ss
   fromPO (IntPO _ _ p) = p
@@ -294,7 +296,7 @@ instance PO IntPO where
   revMajor (IntPO maj _ _) = maj
   revMinor (IntPO _ min _) = min
 
-data BoolPO = BoolPO Int Int [[Identifier]] deriving Show
+data BoolPO = BoolPO Int Int (Gr Identifier) deriving Show
 instance PO BoolPO where
   toPO maj min ss  = BoolPO maj min ss
   fromPO (BoolPO _ _ p) = p
@@ -374,4 +376,81 @@ instance Ord Term where
    compare t1 t2 = error $ show t1 ++ show t2
 
 
+type Gr a = ([(Int,[a])], S.Set (Int,Int))
+a :: Gr Identifier
+a = ([(0,(map toId "abc"))],S.empty)
+m1 = [(toId 'a',0), (toId 'b',1),(toId 'c',1)]
+m2 = [(toId 'a',1), (toId 'b',0),(toId 'c',0)]
+
+toId :: Char -> Identifier
+toId c = Identifier [c]
+
+
+grRefine :: (Ord v, Ord a, Eq a) => Gr a -> [(a,v)] -> Maybe (Gr a)
+grRefine prev@(oldBlocks,edges) model
+  | same prev next = Nothing
+  | otherwise = Just next
+  where temp =  [((oldId,newId),q) | (n,v) <- model
+           , then group by v -- Sorting is implicit.
+           , (oldId,p) <- oldBlocks
+           , q@(_:_) <- [n `intersect` p] -- Make sure there's at least one element
+           | newId <- [0..]
+           ]
+        blocks = [(id,block) |((_,id),block) <- temp]
+        next = (blocks, S.fromList $ updateEdges ++ newEdges)
+
+        updateEdges = [(newA,newB) | ((oldA,newA),_) <- temp
+                      ,  ((oldB,newB),_) <- temp
+                      , (from,to) <- S.toList edges
+                      , oldA == from, oldB == to
+                      ]
+        newEdges = [(newA,newB) | ((_,newA),_) <- temp
+                                | ((_,newB),_) <- safeTail temp]
+        safeTail [] = []
+        safeTail (a:as) = as
+        same (aBlocks,aEdges) (bBlocks,bEdges) =
+          S.fromList (map fst aBlocks) == S.fromList (map fst bBlocks) &&
+          aEdges == bEdges
+
+
+grFormula :: Gr Identifier -> Identifier -> Term -> Term
+grFormula (partition,edges) rel time =
+    Term_qual_identifier_ (Qual_identifier (Identifier "and"))
+                            (equivalences ++ ordered)
+    where -- Generate "c(k) = c'(k) for each c in cs
+      equiv (_,(c:cs)) =
+          [Term_qual_identifier_ (Qual_identifier (Identifier "="))
+           [Term_qual_identifier_
+            (Qual_identifier c)
+            [time],
+            Term_qual_identifier_
+            (Qual_identifier c')
+            [time]]
+             | c' <- cs]
+
+      equivalences = concatMap equiv partition
+      ordered = concatMap inEq (S.toList edges)
+      inEq (r,s)
+           | (s,r) `S.member` edges = []
+           | otherwise =
+             case (lookup r partition, lookup s partition) of
+               (Just (rid:_), Just (sid:_)) ->
+                 [(Term_qual_identifier_ (Qual_identifier rel)
+                                  [Term_qual_identifier_
+                                   (Qual_identifier rid)
+                                   [time],
+                                   Term_qual_identifier_
+                                   (Qual_identifier sid)
+                                   [time]])]
+
+
+
+
+test = sequence_ [print (grFormula po (Identifier "<=") (k_time 0)) >>
+                  print part >>
+                  print e
+                  | po@(part,e) <- [a,b,c]]
+
+  where Just b = grRefine a m1
+        Just c = grRefine b m2
 

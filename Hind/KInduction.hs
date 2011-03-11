@@ -39,7 +39,7 @@ parCheck proverCmd hindFile = do
        else noticeM "Hind" "Failed" >> return Nothing
 
     -- Delay, just so that we can let invariant generation catch up.
-    -- threadDelay 10000
+    -- threadDelay 10000000
 
     -- Clean up all the threads
     mapM_ killThread [invGenBase,invGenStep,baseProc,stepProc]
