@@ -9,6 +9,7 @@ import Control.Exception
 import Control.Monad
 import Control.Concurrent
 import Data.List(sortBy, groupBy)
+import System.Log.Logger
 
 parCheck :: String -> HindFile -> IO ()
 parCheck proverCmd hindFile = do
@@ -34,11 +35,11 @@ parCheck proverCmd hindFile = do
 
     result <- loop 1
     if result
-       then putStrLn "Passed" >> return Nothing
-       else putStrLn "Failed" >> return Nothing
+       then noticeM "Hind" "Passed" >> return Nothing
+       else noticeM "Hind" "Failed" >> return Nothing
 
     -- Delay, just so that we can let invariant generation catch up.
-    -- threadDelay 1000000
+    threadDelay 1000000
 
     -- Clean up all the threads
     mapM_ killThread [invGenBase,invGenStep,baseProc,stepProc]
@@ -52,10 +53,10 @@ data ProverResult = BasePass Integer | BaseFail Integer | StepPass Integer | Ste
 baseProcess
   :: String -> HindFile -> Chan ProverResult -> Chan POVal -> IO ThreadId
 baseProcess proverCmd hindFile resultChan invChan = forkIO $
-  bracket (makeProver proverCmd) closeProver $ \p -> do
-    putStrLn "Base Prover Started"
+  bracket (makeProverNamed proverCmd "baseProcess") closeProver $ \p -> do
+    infoM "Hind.baseProcess" "Base Prover Started"
     _ <- mapM (sendCommand p) model
-    putStrLn "System Defined"
+    infoM "Hind.baseProcess" "System Defined"
     let loop k = do
           -- checkInvariant p invChan
 
@@ -84,10 +85,10 @@ baseProcess proverCmd hindFile resultChan invChan = forkIO $
 
 stepProcess :: String -> HindFile -> Chan ProverResult -> Chan POVal -> IO ThreadId
 stepProcess proverCmd hindFile resultChan invChan = forkIO $
-  bracket (makeProver proverCmd) closeProver $ \p -> do
-    putStrLn "Step Prover Started"
+  bracket (makeProverNamed proverCmd "stepProcess") closeProver $ \p -> do
+    infoM "Hind.stepProcess" "Step Prover Started"
     _ <- mapM (sendCommand p) model
-    putStrLn "System Defined"
+    infoM "Hind.stepProcess" "System Defined"
 
     -- Send '(not (prop n))'
     sendCommand p (Assert kstep)

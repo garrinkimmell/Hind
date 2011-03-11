@@ -10,6 +10,12 @@ import Data.Time
 import System.Environment
 
 import Language.SMTLIB
+import System.Log.Logger
+import System.Log.Handler(setFormatter,close)
+import System.Log.Handler.Simple
+import System.Log.Formatter
+
+
 
 {-
 import Criterion.Main (defaultMain, bench)
@@ -44,14 +50,25 @@ main' = do
 main = do
   args <- getArgs
   case args of
-    [proverCmd, fname] -> do
+    [proverCmd, fname, level] -> do
+      -- Set up the logger
+      h <- do lh <- fileHandler (fname ++ ".log") (read level)
+              return $ setFormatter lh $
+                       (simpleLogFormatter "[$loggername : $prio] $msg")
+                       -- (simpleLogFormatter "[$time : $loggername : $prio] $msg")
+      updateGlobalLogger "Hind" (addHandler h)
+      updateGlobalLogger "Hind" (setLevel (read level))
+      -- updateGlobalLogger rootLoggerName (setLevel INFO)
+
+      infoM "Hind" ("Checking file " ++ fname)
+
       res <- hindFile fname
-      print $ genStates (hindScript res)
-      putStrLn "Parallel Check"
+
       time $ parCheck proverCmd res
+      close h
       return ()
 
-    _ -> putStrLn "usage: hind <prover command> <hind file>"
+    _ -> putStrLn "usage: hind <prover command> <hind file> <LOGLEVEL>"
 
 
 z3 :: [Char]

@@ -9,7 +9,7 @@ import Control.Exception
 import Control.Monad
 import Control.Concurrent
 import Data.List(sortBy, groupBy,nub,intersect)
-
+import System.Log.Logger
 
 
 -- Invariant Generation
@@ -26,7 +26,7 @@ invGenProcess proverCmd hindFile invChan = do
   return (baseProc,stepProc)
   where candidates =
           [genPO sort states i
-           | (sort,states) <- reverse $ hindStates hindFile
+           | (sort,states) <-  hindStates hindFile
            | i <- [0..]]
 
 
@@ -54,7 +54,6 @@ invGenBaseProcess proverCmd hindFile source sink isDone = forkIO  $
               Just po'
                 | revMajor po == revMajor po'
                    -> do
-                       putStrLn $ "Skipping "
                        po' <- readChan source
                        return $ Just (po',0)
                 | otherwise -> return $ Just (po,k)
@@ -73,6 +72,9 @@ invGenBaseProcess proverCmd hindFile source sink isDone = forkIO  $
           let candidateFormula :: Term
               candidateFormula = formula po (k_time k)
           push 1 p
+          infoM "Hind.invGenBase" $
+                  "Checking candidate:" ++ show candidateFormula ++
+                  "(" ++ show k ++ ")"
           -- negate the candidate
           sendCommand p (Assert (negateTerm candidateFormula))
           valid <- isUnsat p
@@ -80,14 +82,24 @@ invGenBaseProcess proverCmd hindFile source sink isDone = forkIO  $
                then do
                  pop 1 p
                  -- Assert the invariant for k
+                 noticeM "Hind.invGenBase" $
+                    "Verified candidate:" ++ show candidateFormula ++
+                     "(" ++ show k ++ ")"
+
                  sendCommand p (Assert candidateFormula)
                  -- Pass the candidate order to the step process
                  writeChan sink (k,po)
                  loop po (k+1)
 
                else do
+                 infoM "Hind.invGenBase" $
+                         "Candidate not valid:" ++ show candidateFormula ++
+                         "(" ++ show k ++ ")"
+
                  -- Query the countermodel
                  counterModel <- valuation p po (k_time k)
+                 infoM "Hind.invGenBase" $
+                        "Got Countermodel: " ++ show counterModel
                  let next = refine (counterModel) po
                  pop 1 p
                  -- unless (next == po) $ refinement next k
@@ -132,24 +144,40 @@ invGenStepProcess proverCmd hindFile source sink isDone  = forkIO $
                 [Assert (formula po (time i))
                  | i <- [1..k+1]]
           -- Assert the negated candidate
-          sendCommand p (Assert (negateTerm (formula po (time 0))))
+          let candidateFormula = (formula po (time 0))
+          infoM "Hind.invGenStep" $
+                  "Checking candidate:" ++ show candidateFormula ++
+                  "(" ++ show k ++ ")"
+
+          sendCommand p (Assert (negateTerm candidateFormula))
+
           valid <- isUnsat p
           if valid
              then do
-               putStrLn $ "Found a valid invariant (" ++ show k ++ ")"
+               noticeM "Hind.invGenStep" $
+                  "Verified candidate" ++ show candidateFormula ++
+                  "(" ++ show k ++ ")"
+
 
                let n_term = (Term_qual_identifier (Qual_identifier (Identifier "n")))
                    inv_formula =
                      Term_forall [Sorted_var "n" (Sort_identifier (Identifier "integer"))]
                                  (formula po n_term)
-               print inv_formula
+               noticeM "Hind.invGenStep" $
+                  "Verified candidate" ++ show inv_formula ++
+                  "(" ++ show k ++ ")"
                pop 2 p
                writeChan sink po
                -- putMVar isDone 0
                loop (Just po)
              else do
-               putStrLn "Invariant Candidate not valid"
+               infoM "Hind.invGenStep" $
+                  "Candidate not valid:" ++ show candidateFormula ++
+                  "(" ++ show k ++ ")"
                counterModel <- valuation p po (time 0)
+               infoM "Hind.invGenStep" $
+                        "Got Countermodel: " ++ show counterModel
+
                let next = refine counterModel po
                pop 1 p
                refinement next k
@@ -164,7 +192,7 @@ invGenStepProcess proverCmd hindFile source sink isDone  = forkIO $
 
           n@(_,p') <- readChan chan
           if revMajor p == revMajor p'
-             then do putStrLn "Step Skipping"
+             then do debugM "invGenStep" "Skipping"
                      getNext chan (Just p)
              else return n
 
@@ -311,10 +339,10 @@ instance Eq Term where
 
 instance Ord Term where
    (Term_qual_identifier (Qual_identifier (Identifier "true"))) `compare`
-    (Term_qual_identifier (Qual_identifier (Identifier "false"))) = LT
+    (Term_qual_identifier (Qual_identifier (Identifier "false"))) = GT
 
    (Term_qual_identifier (Qual_identifier (Identifier "false"))) `compare`
-    (Term_qual_identifier (Qual_identifier (Identifier "true"))) = GT
+    (Term_qual_identifier (Qual_identifier (Identifier "true"))) = LT
 
    (Term_qual_identifier (Qual_identifier (Identifier "true"))) `compare`
     (Term_qual_identifier (Qual_identifier (Identifier "true"))) = EQ

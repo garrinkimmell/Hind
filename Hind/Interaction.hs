@@ -2,7 +2,7 @@
 module Hind.Interaction
   (Prover,
    makeProver, makeProverNamed, closeProver,
-   sendCommand, sendCommandDebug,
+   sendCommand,
    checkSat,isSat,isUnsat,
    push,pop,
    getModel
@@ -16,6 +16,8 @@ import Control.Concurrent
 import Control.Exception
 import Control.Monad
 import Text.ParserCombinators.Poly
+import System.Log.Logger
+
 
 
 data Prover = Prover { requests :: Chan Command
@@ -89,18 +91,13 @@ closeProver prover = do
 
 sendCommand :: Prover -> Command -> IO Command_response
 sendCommand prover cmd = do
+  debugM ("Hind." ++ (name prover)) ("req:" ++ show cmd)
   writeChan (requests prover) cmd
   rsp <- readChan (responses prover)
+  debugM ("Hind." ++ (name prover)) ("rsp:" ++ show rsp)
   return rsp
 
 
-sendCommandDebug :: Prover -> Command -> IO Command_response
-sendCommandDebug prover cmd = do
-  putStrLn $ name prover ++ " req: " ++ show cmd
-  writeChan (requests prover) cmd
-  rsp <- readChan (responses prover)
-  putStrLn $ name prover ++ " rsp: " ++ show rsp
-  return rsp
 
 
 -- | Check satisfiability
