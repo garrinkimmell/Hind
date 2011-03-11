@@ -1,4 +1,4 @@
-{-# LANGUAGE RankNTypes, ExistentialQuantification, ScopedTypeVariables, TransformListComp #-}
+{-# LANGUAGE RankNTypes, ExistentialQuantification, ScopedTypeVariables, TransformListComp, ParallelListComp #-}
 module Hind.InvGen where
 
 import Hind.Parser(HindFile(..))
@@ -15,16 +15,30 @@ import Data.List(sortBy, groupBy,nub,intersect)
 -- Invariant Generation
 -- invGenProcess proverCmd model property initPO invChan = forkIO $ do
 invGenProcess proverCmd hindFile invChan = do
+  candidatesChan <- newChan
   basePassed <- newChan
   candidateDone <- newEmptyMVar
-  baseProc <- invGenBaseProcess proverCmd hindFile basePassed candidateDone
-  stepProc <- invGenStepProcess proverCmd hindFile basePassed invChan candidateDone
+  baseProc <-
+    invGenBaseProcess proverCmd hindFile candidatesChan basePassed candidateDone
+  stepProc <-
+    invGenStepProcess proverCmd hindFile basePassed invChan candidateDone
+  writeList2Chan candidatesChan candidates
   return (baseProc,stepProc)
+  where candidates =
+          [genPO sort states i
+           | (sort,states) <- reverse $ hindStates hindFile
+           | i <- [0..]]
+
 
 -- | The refinement process for the base case of invariant generation based on a partial order.
--- invGenBaseProcess :: PO po => String -> [Command] -> po -> Chan (Integer,po) -> IO ThreadId
-invGenBaseProcess :: String -> HindFile -> Chan (Integer, POVal) -> MVar Int -> IO ThreadId
-invGenBaseProcess proverCmd hindFile sink isDone = forkIO  $
+invGenBaseProcess ::
+  String -> -- ^ Prover command
+  HindFile -> -- ^ Input File
+  Chan POVal -> -- ^ Source for candidates
+  Chan (Integer, POVal) ->  -- ^ Sink to step case
+  MVar POVal ->  -- ^ Feedback from step case
+  IO ThreadId
+invGenBaseProcess proverCmd hindFile source sink isDone = forkIO  $
   {-# SCC "invGenBaseProcess" #-}
   bracket (makeProverNamed proverCmd "invGenBase") closeProver $ \p -> do
 
@@ -33,15 +47,25 @@ invGenBaseProcess proverCmd hindFile sink isDone = forkIO  $
 
     -- | 'loop' is the outer loop, increasing 'k'
     let loop po k = do
-          done <- tryTakeMVar isDone
-          -- Currently we're just using this like a boolean flag, later we'll pass a candidate id
-          case done of
-            Just _ -> return ()
-            Nothing -> do
+          next <- do
+            -- Check to see if there a previous candidate has been verified.
+            res <- tryTakeMVar isDone
+            case res of
+              Just po'
+                | revMajor po == revMajor po'
+                   -> do
+                       putStrLn $ "Skipping "
+                       po' <- readChan source
+                       return $ Just (po',0)
+                | otherwise -> return $ Just (po,k)
+              Nothing -> return $ Just (po,k)
+          case next of
+            Nothing -> return ()
+            Just (po',k) -> do
                sendCommand p (Assert
                   (Term_qual_identifier_ (Qual_identifier trans)
                    [Term_spec_constant (Spec_constant_numeral k)]))
-               refinement po k
+               refinement po' k
 
         -- | 'refinement' searches for an invariant.
         -- refinement :: PO po => po -> Integer -> IO ()
@@ -69,17 +93,16 @@ invGenBaseProcess proverCmd hindFile sink isDone = forkIO  $
                  -- unless (next == po) $ refinement next k
                  refinement next k
     -- start running the process
-    loop initPO 0
+    po <- readChan source
+    loop po 0
   where (Script transitionSystem) = hindScript hindFile
-        _:initPO:_ = map (uncurry genPO) $ hindStates hindFile
-
         trans = hindTransition hindFile
 
 -- | The refinement process for the step case of invariant generation based on a partial order.
 invGenStepProcess ::
-  String -> HindFile -> Chan (Integer,POVal) -> Chan POVal -> MVar Int -> IO ThreadId
+  String -> HindFile ->
+  Chan (Integer,POVal) -> Chan POVal -> MVar POVal -> IO ThreadId
 invGenStepProcess proverCmd hindFile source sink isDone  = forkIO $
-
   {-# SCC "invGenStepProcess" #-}
   bracket (makeProverNamed proverCmd "invStep") closeProver $ \p -> do
     -- Initialize the prover with the transition system
@@ -89,10 +112,10 @@ invGenStepProcess proverCmd hindFile source sink isDone  = forkIO $
     let time i = Term_qual_identifier_ (Qual_identifier (Identifier "-"))
                    [Term_qual_identifier (Qual_identifier (Identifier "n")),
                     Term_spec_constant (Spec_constant_numeral i)]
-    let loop = do
+    let loop cur = do
           push 1 p
           -- Get a k-base-valid candidate
-          (k,po) <- readChan source
+          (k,po) <- getNext source cur
           -- set up the transition system
           mapM_ (sendCommand p)
                 -- trans (n-i)
@@ -123,7 +146,7 @@ invGenStepProcess proverCmd hindFile source sink isDone  = forkIO $
                pop 2 p
                writeChan sink po
                -- putMVar isDone 0
-               loop
+               loop (Just po)
              else do
                putStrLn "Invariant Candidate not valid"
                counterModel <- valuation p po (time 0)
@@ -131,9 +154,19 @@ invGenStepProcess proverCmd hindFile source sink isDone  = forkIO $
                pop 1 p
                refinement next k
 
-    loop
+    loop Nothing
   where (Script transitionSystem) = hindScript hindFile
         trans = hindTransition hindFile
+        -- GetChan will drop candidates sent by the base process that
+        -- we've already verified as valid.
+        getNext chan Nothing = readChan chan
+        getNext chan (Just p) = do
+
+          n@(_,p') <- readChan chan
+          if revMajor p == revMajor p'
+             then do putStrLn "Step Skipping"
+                     getNext chan (Just p)
+             else return n
 
 -- | Convert the integer 'k' to a Term
 k_time k = Term_spec_constant (Spec_constant_numeral k)
@@ -153,7 +186,8 @@ class PO a where
   -- | Construct a partial order from an equivalence over state variables.
   -- Each list element represents an equivalence class, and the classes are ordered
   -- according to the partial order <= relation.
-  toPO :: [[Identifier]] -> a
+  -- Takes a major/minor revision number
+  toPO :: Int -> Int -> [[Identifier]] -> a
 
   -- | Convert a partial order to an equivalence relation over state variables.
   -- Each list element represents an equivalence class, and the classes are ordered
@@ -166,7 +200,9 @@ class PO a where
 
   -- | Refine a partial order using the given countermodel.
   refine :: [(Identifier,Term)] -> a -> a
-  refine model prev = toPO $ poRefine (fromPO prev) model
+  refine model prev = toPO maj (min+1) $ poRefine (fromPO prev) model
+     where maj = revMajor prev
+           min = revMinor prev
 
   -- | Generate a formula (for the given time) for this partial order.
   formula :: a -> Term -> Term
@@ -175,19 +211,25 @@ class PO a where
   -- | The "<=" relation
   lt :: a -> Identifier
 
+  -- | revision identifiers
+  revMajor :: a -> Int
+  revMinor :: a -> Int
+
 
 -- | POVal is an existential wrapper around a PO
 data POVal = forall a. PO a => POVal a
 
 -- | Create a POVal wrapping a PO of the type of the first argument.
-makePO :: forall a. PO a => a -> [[Identifier]] -> POVal
-makePO _ ps = POVal (toPO ps :: a)
+makePO :: forall a. PO a => a -> Int -> Int -> [[Identifier]] -> POVal
+makePO _ maj min ps = POVal (toPO maj min ps :: a)
 
--- | Create a POVal given a Sort.
-genPO :: Sort -> [Identifier] -> POVal
-genPO (Sort_identifier (Identifier "Int")) svs = makePO (undefined :: IntPO) [svs]
-genPO (Sort_identifier (Identifier "Bool")) svs = makePO (undefined :: BoolPO) [svs]
-genPO Sort_bool svs = makePO (undefined :: BoolPO) [svs]
+-- | Create a POVal given a Sort and major revision number.
+genPO :: Sort -> [Identifier] -> Int -> POVal
+genPO (Sort_identifier (Identifier "Int")) svs maj =
+  makePO (undefined :: IntPO) maj 0 [svs]
+genPO (Sort_identifier (Identifier "Bool")) svs maj =
+  makePO (undefined :: BoolPO) maj 0 [svs]
+genPO Sort_bool svs maj = makePO (undefined :: BoolPO) maj 0  [svs]
 
 
 instance PO POVal where
@@ -197,25 +239,26 @@ instance PO POVal where
   refine valuation (POVal p) = POVal (refine valuation p)
   formula (POVal p) = formula p
   lt (POVal p) = lt p
+  revMajor (POVal p) = revMajor p
+  revMinor (POVal p) = revMinor p
 
 -- | The partial order for integers.  The inner list corresponds to a
 -- equivalence class, the outer list orders the equivalence classes using <=.
-newtype IntPO = IntPO [[Identifier]]
+data IntPO = IntPO Int Int [[Identifier]]
 instance PO IntPO where
-  toPO = IntPO
-  fromPO (IntPO p) = p
+  toPO maj min ss = IntPO maj min ss
+  fromPO (IntPO _ _ p) = p
   lt _ = (Identifier "<=")
+  revMajor (IntPO maj _ _) = maj
+  revMinor (IntPO _ min _) = min
 
-  -- vars (IntPO p) = nub $ concat p
-  -- refine model (IntPO prev) = IntPO (poRefine prev model)
-  -- formula (IntPO p) time = poFormula "<=" p time
-
-
-newtype BoolPO = BoolPO [[Identifier]]
+data BoolPO = BoolPO Int Int [[Identifier]]
 instance PO BoolPO where
-  toPO = BoolPO
-  fromPO (BoolPO p) = p
+  toPO maj min ss  = BoolPO maj min ss
+  fromPO (BoolPO _ _ p) = p
   lt _ = (Identifier "implies")
+  revMajor (BoolPO maj _ _) = maj
+  revMinor (BoolPO _ min _) = min
 
 -- | Utility functions
 -- poFormula works for a po that is an ordered partition
