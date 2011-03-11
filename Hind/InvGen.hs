@@ -5,6 +5,7 @@ import Hind.Parser(HindFile(..))
 import Hind.Interaction
 import Language.SMTLIB
 
+import Control.Applicative
 import Control.Exception
 import Control.Monad
 import Control.Concurrent
@@ -26,7 +27,7 @@ invGenProcess proverCmd hindFile invChan = do
   return (baseProc,stepProc)
   where candidates =
           [genPO sort states i
-           | (sort,states) <-  hindStates hindFile
+           | (sort,states) <-  reverse $ hindStates hindFile
            | i <- [0..]]
 
 
@@ -50,13 +51,17 @@ invGenBaseProcess proverCmd hindFile source sink isDone = forkIO  $
           next <- do
             -- Check to see if there a previous candidate has been verified.
             res <- tryTakeMVar isDone
+
             case res of
               Just po'
                 | revMajor po == revMajor po'
                    -> do
+                       infoM "Hind.invGenBase" $ "Got isDone of " ++ show po' ++ show po
                        po' <- readChan source
                        return $ Just (po',0)
-                | otherwise -> return $ Just (po,k)
+                | otherwise -> do
+                       infoM "Hind.invGenBase" $ "Got isDone of " ++ show po' ++ show po
+                       return $ Just (po,k)
               Nothing -> return $ Just (po,k)
           case next of
             Nothing -> return ()
@@ -100,10 +105,12 @@ invGenBaseProcess proverCmd hindFile source sink isDone = forkIO  $
                  counterModel <- valuation p po (k_time k)
                  infoM "Hind.invGenBase" $
                         "Got Countermodel: " ++ show counterModel
-                 let next = refine (counterModel) po
                  pop 1 p
-                 -- unless (next == po) $ refinement next k
-                 refinement next k
+                 case refine counterModel po of
+                   Nothing -> do
+                     po' <- readChan source
+                     loop po 0
+                   Just po' -> refinement po' k
     -- start running the process
     po <- readChan source
     loop po 0
@@ -168,7 +175,7 @@ invGenStepProcess proverCmd hindFile source sink isDone  = forkIO $
                   "(" ++ show k ++ ")"
                pop 2 p
                writeChan sink po
-               -- putMVar isDone 0
+               putMVar isDone po
                loop (Just po)
              else do
                infoM "Hind.invGenStep" $
@@ -178,9 +185,13 @@ invGenStepProcess proverCmd hindFile source sink isDone  = forkIO $
                infoM "Hind.invGenStep" $
                         "Got Countermodel: " ++ show counterModel
 
-               let next = refine counterModel po
                pop 1 p
-               refinement next k
+               case refine counterModel po of
+                 Nothing -> loop Nothing
+                 Just po' -> do
+                   infoM "Hind.invGenStep" $
+                         "Refined " ++ show po ++ " to " ++ show po'
+                   refinement po' k
 
     loop Nothing
   where (Script transitionSystem) = hindScript hindFile
@@ -210,7 +221,7 @@ valuation p po time = do
 
 
 -- Invariant generation uses a partial order for candidate set generation
-class PO a where
+class Show a => PO a where
   -- | Construct a partial order from an equivalence over state variables.
   -- Each list element represents an equivalence class, and the classes are ordered
   -- according to the partial order <= relation.
@@ -227,10 +238,11 @@ class PO a where
   vars = nub . concat . fromPO
 
   -- | Refine a partial order using the given countermodel.
-  refine :: [(Identifier,Term)] -> a -> a
-  refine model prev = toPO maj (min+1) $ poRefine (fromPO prev) model
+  refine :: [(Identifier,Term)] -> a -> Maybe a
+  refine model prev = toPO maj (min+1) <$> next
      where maj = revMajor prev
            min = revMinor prev
+           next = poRefine (fromPO prev) model
 
   -- | Generate a formula (for the given time) for this partial order.
   formula :: a -> Term -> Term
@@ -246,6 +258,8 @@ class PO a where
 
 -- | POVal is an existential wrapper around a PO
 data POVal = forall a. PO a => POVal a
+instance Show POVal where
+  show (POVal p) = show p
 
 -- | Create a POVal wrapping a PO of the type of the first argument.
 makePO :: forall a. PO a => a -> Int -> Int -> [[Identifier]] -> POVal
@@ -264,7 +278,7 @@ instance PO POVal where
   toPO _ = error "Use makePO, passing a witness of the type you wish to pack"
   fromPO (POVal p) = fromPO p
   vars (POVal p) = vars p
-  refine valuation (POVal p) = POVal (refine valuation p)
+  refine valuation (POVal p) = POVal <$> (refine valuation p)
   formula (POVal p) = formula p
   lt (POVal p) = lt p
   revMajor (POVal p) = revMajor p
@@ -272,7 +286,7 @@ instance PO POVal where
 
 -- | The partial order for integers.  The inner list corresponds to a
 -- equivalence class, the outer list orders the equivalence classes using <=.
-data IntPO = IntPO Int Int [[Identifier]]
+data IntPO = IntPO Int Int [[Identifier]] deriving Show
 instance PO IntPO where
   toPO maj min ss = IntPO maj min ss
   fromPO (IntPO _ _ p) = p
@@ -280,7 +294,7 @@ instance PO IntPO where
   revMajor (IntPO maj _ _) = maj
   revMinor (IntPO _ min _) = min
 
-data BoolPO = BoolPO Int Int [[Identifier]]
+data BoolPO = BoolPO Int Int [[Identifier]] deriving Show
 instance PO BoolPO where
   toPO maj min ss  = BoolPO maj min ss
   fromPO (BoolPO _ _ p) = p
@@ -317,7 +331,10 @@ poFormula rel partition time =
                                    [time]]):ineq (s:ts)
 
 -- | Refine a conjecture.
-poRefine prev model = [q | (n,v) <- model
+poRefine prev model
+  | prev == next = Nothing
+  | otherwise = Just next
+  where next =  [q | (n,v) <- model
            , then group by v -- Sorting is implicit.
            , p <- prev
            , q@(_:_) <- [n `intersect` p] -- Make sure there's at least one element
