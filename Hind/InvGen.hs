@@ -3,6 +3,7 @@ module Hind.InvGen where
 
 import Hind.Parser(HindFile(..))
 import Hind.Interaction
+import Hind.PathCompression
 import Language.SMTLIB
 
 import qualified Data.Set as S
@@ -141,6 +142,9 @@ invGenStepProcess proverCmd hindFile source sink isDone  = forkIO $
                 -- trans (n-i)
                 [Assert (Term_qual_identifier_ (Qual_identifier trans) [time i])
                  | i <- [0..k+1]]
+
+          -- Send path compression
+          mapM_ (sendCommand p) $ distinctStates (k+1)
 
           refinement po k
 
