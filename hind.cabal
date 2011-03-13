@@ -27,6 +27,13 @@ Executable hind
        Main-Is:        Main.hs
        Ghc-Options:  -threaded -O2  -auto
 
+Executable covgen
+       Buildable: True
+       Build-depends: smt-lib, time
+       Main-Is:        CovGen.hs
+       Ghc-Options:  -threaded -O2  -auto
+
+
 source-repository head
   type: git
   location: git://gitsldg.ittc.ku.edu/kansas-lava/kansas-lava-verification.git

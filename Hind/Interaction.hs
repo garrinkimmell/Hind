@@ -2,7 +2,7 @@
 module Hind.Interaction
   (Prover,
    makeProver, makeProverNamed, closeProver,name,
-   sendCommand,
+   sendCommand, sendScript,
    checkSat,isSat,isUnsat,
    push,pop,
    getModel
@@ -94,6 +94,9 @@ sendCommand prover cmd = do
   return rsp
 
 
+sendScript :: Prover -> Script -> IO [Command_response]
+sendScript prover (Script cmds) = mapM (sendCommand prover) cmds
+
 
 
 -- | Check satisfiability
@@ -102,7 +105,7 @@ checkSat prover = do
   res <- sendCommand prover Check_sat
   case res of
     (Cs_response status) -> return status
-    _ -> fail $ show res
+    _ -> fail $ "checkSat: " ++ show res
 
 
 isSat, isUnsat :: Prover -> IO Bool
