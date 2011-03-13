@@ -22,7 +22,7 @@ main = do
       vecHandle <- openFile (fname ++ ".vectors") WriteMode
       coverage res vecHandle
 
-    _ -> putStrLn "usage: covgen <fname>"
+    _ -> putStrLn "usage: covgen <fname> <loglevel>"
 
 
 
@@ -97,5 +97,4 @@ fetchTrace file prover k = do
 proverCmd  = "ssh teme z3/bin/z3 -si -smt2 MODEL=true"
 
 data Trace = Trace Identifier [Term] deriving Show
---type Trace = (Identifier,[Term])
 data TestVector = TestVector String Bool [Trace] deriving Show
