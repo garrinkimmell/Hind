@@ -13,6 +13,7 @@ data HindFile = HindFile { hindProperties :: [Identifier]
                          , hindOutputs :: [Identifier]
                          , hindStates :: [(Sort,[Identifier])]
                          , hindTransition :: Identifier
+                         , hindCoverage :: [Identifier]
                          , hindScript :: Script
                          } deriving Show
 
@@ -48,10 +49,11 @@ processScript scr@(Script cmds) = do
   properties <- getProperties cmds
   inputs <- getInputs cmds
   outputs <- getOutputs cmds
+  coverage <- getCoverage cmds
   let groupedStates = [(head ty,n)  | (ty,n) <- states,
                         then group by ty]
   return $
-         HindFile properties inputs outputs groupedStates trans
+         HindFile properties inputs outputs groupedStates trans coverage
                     (Script (filterInfos cmds))
 
 
@@ -75,6 +77,10 @@ getOutputs cmds = do
    (Set_info (Attribute_s_expr _ (S_exprs ss))) <- getInfo ":outputs" cmds
    return [Identifier s | S_expr_symbol s <- ss]
 
+getCoverage cmds = do
+   (Set_info (Attribute_s_expr _ (S_exprs ss))) <- getInfo ":coverage" cmds
+   return [Identifier s | S_expr_symbol s <- ss]
+  `catchError` (\_ -> return [])
 
 
 
@@ -94,7 +100,7 @@ getTypes cmds ids = catMaybes $ map idRange cmds
 
 filterInfos = filter (not . hindInfo)
   where hindInfo (Set_info (Attribute_s_expr attr  _)) =
-          attr `elem` [":states",":transition",":properties", ":inputs", ":outputs"]
+          attr `elem` [":states",":transition",":properties", ":inputs", ":outputs",":coverage"]
         hindInfo _ = False
 
 

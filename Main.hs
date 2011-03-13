@@ -3,6 +3,7 @@ module Main where
 import Hind.KInduction
 import Hind.Parser
 import Hind.Chan
+import Hind.Logging
 
 import Text.Printf
 import Control.Exception
@@ -58,19 +59,7 @@ main = do
   case args of
     [proverCmd, fname, level] -> do
       -- Set up the logger
-      oh <- do lh <- streamHandler stdout NOTICE
-               return $ setFormatter lh $
-                        (simpleLogFormatter "[$time : $loggername : $prio] $msg")
-
-      h <- do lh <- fileHandler (fname ++ ".log") (read level)
-              return $  setFormatter lh $
-                       (simpleLogFormatter "[$time : $loggername : $prio] $msg")
-
-      updateGlobalLogger rootLoggerName (setHandlers ([] :: [GenericHandler ()]))
-
-      updateGlobalLogger rootLoggerName (addHandler oh)
-      updateGlobalLogger "Hind" (addHandler h)
-      updateGlobalLogger "Hind" (setLevel (read level))
+      setupLogger fname level
 
       infoM "Hind" ("Checking file " ++ fname)
 

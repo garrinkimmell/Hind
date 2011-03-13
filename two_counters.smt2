@@ -4,6 +4,7 @@
                    ___z8z___ ___z9z___ ___z10z___))
 (set-info :inputs (___z4z___ ___z5z___))
 (set-info :outputs (___z3z___))
+(set-info :coverage (___cov0))
 
 
 ;(set-option print-success false)
@@ -35,7 +36,10 @@
 (declare-fun ___z10z___ (Int) Int)
 			; V51_time ;  LOCAL,STATE(1,)/108
 
-
+; coverage test points
+(declare-fun ___cov0 (Int) Bool)
+(define-fun ___cov0_cov ((_M Int)) Bool
+  (= (___cov0 _M) (and (not (= _M 0)) (= (___z8z___ (- _M 1)) 3))))
 
 ; ; Generic definitions:
 (define-fun DEF__103 ((_M Int)) Bool (= (___z3z___ _M) (= (___z4z___ _M) (___z5z___ _M))))
@@ -65,5 +69,6 @@
 
 				 (DEF__109 _M)
 				 (DEF__110 _M)
+				 (___cov0_cov _M)
 				 ))
 
