@@ -15,7 +15,7 @@ import Control.Concurrent(ThreadId,forkIO,killThread,threadDelay)
 import Data.List(sortBy, groupBy)
 import System.Log.Logger
 
-parCheck :: String -> HindFile -> IO ()
+parCheck :: String -> HindFile -> IO Bool
 parCheck proverCmd hindFile = do
     -- Add in path compression
     let hindFile' = addPathCompression hindFile
@@ -50,7 +50,7 @@ parCheck proverCmd hindFile = do
 
     -- Clean up all the threads
     mapM_ killThread [invGenBase,invGenStep,baseProc,stepProc]
-    return ()
+    return result
 
 
 data ProverResult = BasePass Integer | BaseFail Integer | StepPass Integer | StepFail Integer
@@ -66,6 +66,7 @@ baseProcess proverCmd hindFile resultChan invChan = forkIO $
     infoM "Hind.baseProcess" "System Defined"
     let loop k = do
           -- checkInvariant p invChan
+
           -- send (trans (k - 1)
           sendCommand p (Assert (trans (k - 1)))
           -- send (not (p (k))
@@ -98,12 +99,13 @@ stepProcess proverCmd hindFile resultChan invChan = forkIO $
 
     -- Send '(not (prop n))'
     sendCommand p (Assert kstep)
+
+    -- Send path compression
     sendCommand p (stateCharacterisic 0)
 
     let loop k = do
           -- Send '(trans (n-k+1)'
           sendCommand p (Assert (trans (k - 1)))
-
 
           -- Send '(prop (n-k))'
           sendCommand p (Assert (prop k))
