@@ -19,8 +19,8 @@ main = do
     [cmd,fname,level] -> do
       setupLogger fname level
       res <- hindFile fname
-      vecHandle <- openFile (fname ++ ".vectors") WriteMode
-      coverage cmd res vecHandle
+      bracket (openFile (fname ++ ".vectors") WriteMode) hClose
+              (coverage cmd res)
 
     _ -> putStrLn "usage: covgen <prover command> <hind file> <LOGLEVEL>"
 
