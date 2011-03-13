@@ -4,13 +4,16 @@ module Hind.InvGen where
 import Hind.Parser(HindFile(..))
 import Hind.Interaction
 import Hind.PathCompression
+import Hind.Chan
 import Language.SMTLIB
 
 import qualified Data.Set as S
 import Control.Applicative
 import Control.Exception
 import Control.Monad
-import Control.Concurrent
+import Control.Concurrent(forkIO,newEmptyMVar,ThreadId)
+import Control.Concurrent.MVar
+
 import Data.List(sortBy, groupBy,nub,intersect)
 import System.Log.Logger
 
@@ -21,14 +24,24 @@ invGenProcess proverCmd hindFile invChan = do
   candidatesChan <- newChan
   basePassed <- newChan
   candidateDone <- newEmptyMVar
+
+  -- The step process writes to the inv chan, but it reads from a duplicated
+  -- version.
+  baseProcInv <- dupChan invChan
+  stepProcInv <- dupChan invChan
+
   baseProc <-
-    invGenBaseProcess proverCmd hindFile candidatesChan basePassed candidateDone
+    invGenBaseProcess proverCmd hindFile candidatesChan
+                      basePassed candidateDone baseProcInv
+
   stepProc <-
-    invGenStepProcess proverCmd hindFile basePassed invChan candidateDone
+    invGenStepProcess proverCmd hindFile basePassed stepProcInv candidateDone
   writeList2Chan candidatesChan candidates
   return (baseProc,stepProc)
   where candidates =
           [genPO sort states i
+           -- FIXME: No reason to reverse this, it was just so that int
+           -- candidates were checked before bool.
            | (sort,states) <-  reverse $ hindStates hindFile
            | i <- [0..]]
 
@@ -40,8 +53,9 @@ invGenBaseProcess ::
   Chan POVal -> -- ^ Source for candidates
   Chan (Integer, POVal) ->  -- ^ Sink to step case
   MVar POVal ->  -- ^ Feedback from step case
+  Chan POVal -> -- ^ A source for invariants
   IO ThreadId
-invGenBaseProcess proverCmd hindFile source sink isDone = forkIO  $
+invGenBaseProcess proverCmd hindFile source sink isDone invChan = forkIO  $
   {-# SCC "invGenBaseProcess" #-}
   bracket (makeProverNamed proverCmd "invGenBase") closeProver $ \p -> do
 
@@ -49,33 +63,44 @@ invGenBaseProcess proverCmd hindFile source sink isDone = forkIO  $
     mapM_ (sendCommand p) transitionSystem
 
     -- | 'loop' is the outer loop, increasing 'k'
-    let loop po k = do
-          next <- do
+    let loop po invId k = do
+
+
+          (po',k') <- do
             -- Check to see if there a previous candidate has been verified.
             res <- tryTakeMVar isDone
-
             case res of
               Just po'
                 | revMajor po == revMajor po'
                    -> do
-                       infoM "Hind.invGenBase" $ "Got isDone of " ++ show po' ++ show po
+                       infoM "Hind.invGenBase" $
+                               "Got isDone of " ++ show po' ++ show po
                        po' <- readChan source
-                       return $ Just (po',0)
+                       return (po',0)
                 | otherwise -> do
-                       infoM "Hind.invGenBase" $ "Got isDone of " ++ show po' ++ show po
-                       return $ Just (po,k)
-              Nothing -> return $ Just (po,k)
-          case next of
-            Nothing -> return ()
-            Just (po',k) -> do
-               sendCommand p (Assert
-                  (Term_qual_identifier_ (Qual_identifier trans)
-                   [Term_spec_constant (Spec_constant_numeral k)]))
-               refinement po' k
+                       infoM "Hind.invGenBase" $
+                               "Got isDone of " ++ show po' ++ show po
+                       return (po,k)
+              Nothing -> return (po,k)
+
+          -- Assert the current invariant, or a new one if it is available.
+          invId' <- getAndProcessInv p invChan invId
+                    (assertBaseInv p k') (assertBaseInv p k')
+
+          mapM_ (sendCommand p)
+                  [(Assert
+                    (Term_qual_identifier_ (Qual_identifier trans)
+                     [Term_spec_constant (Spec_constant_numeral i)]))
+                          | i <- [0..k']]
+          refinement po' invId'  k'
 
         -- | 'refinement' searches for an invariant.
         -- refinement :: PO po => po -> Integer -> IO ()
-        refinement po k = do
+        refinement po invId k = do
+          invId' <- getAndProcessInv p invChan invId
+                    (\_ -> return ()) (assertBaseInv p k)
+
+
           let candidateFormula :: Term
               candidateFormula = formula po (k_time k)
           push 1 p
@@ -96,7 +121,7 @@ invGenBaseProcess proverCmd hindFile source sink isDone = forkIO  $
                  sendCommand p (Assert candidateFormula)
                  -- Pass the candidate order to the step process
                  writeChan sink (k,po)
-                 loop po (k+1)
+                 loop po invId' (k+1)
 
                else do
                  infoM "Hind.invGenBase" $
@@ -111,15 +136,18 @@ invGenBaseProcess proverCmd hindFile source sink isDone = forkIO  $
                  case refine counterModel po of
                    Nothing -> do
                      po' <- readChan source
-                     loop po 0
-                   Just po' -> refinement po' k
+                     loop po invId' 0
+                   Just po' -> refinement po' invId' k
     -- start running the process
     po <- readChan source
-    loop po 0
+    loop po NoInv 0
   where (Script transitionSystem) = hindScript hindFile
         trans = hindTransition hindFile
 
--- | The refinement process for the step case of invariant generation based on a partial order.
+-- | The refinement process for the step case of invariant generation based on a
+-- partial order. The 'sink' is both the invariant output (for invariants that
+-- this process has verified) and input (for invariants that some other process
+-- has generated)
 invGenStepProcess ::
   String -> HindFile ->
   Chan (Integer,POVal) -> Chan POVal -> MVar POVal -> IO ThreadId
@@ -133,7 +161,8 @@ invGenStepProcess proverCmd hindFile source sink isDone  = forkIO $
     let time i = Term_qual_identifier_ (Qual_identifier (Identifier "-"))
                    [Term_qual_identifier (Qual_identifier (Identifier "n")),
                     Term_spec_constant (Spec_constant_numeral i)]
-    let loop cur = do
+    let loop :: Maybe POVal -> InvId -> IO ()
+        loop cur invId = do
           push 1 p
           -- Get a k-base-valid candidate
           (k,po) <- getNext source cur
@@ -145,11 +174,18 @@ invGenStepProcess proverCmd hindFile source sink isDone  = forkIO $
 
           -- Send path compression
           mapM_ (sendCommand p) $ distinctStates (k+1)
-
-          refinement po k
+          -- Fetch/Assert inferred invariants
+          invId' <- getAndProcessInv p sink invId
+                    (assertStepInv p k)
+                    (assertStepInv p k)
+          refinement po invId' k
 
         -- start the refinement process
-        refinement po k = do
+        refinement po invId k = do
+          invId' <- getAndProcessInv p sink invId
+                    (\_ -> return ()) -- Don't assert invariant that isn't new.
+                    (assertStepInv p k)
+
           push 1 p
           -- Assert the induction hypothesis for previous k+1 steps
           mapM_ (sendCommand p)
@@ -181,7 +217,7 @@ invGenStepProcess proverCmd hindFile source sink isDone  = forkIO $
                pop 2 p
                writeChan sink po
                putMVar isDone po
-               loop (Just po)
+               loop (Just po) invId'
              else do
                infoM "Hind.invGenStep" $
                   "Candidate not valid:" ++ show candidateFormula ++
@@ -192,13 +228,14 @@ invGenStepProcess proverCmd hindFile source sink isDone  = forkIO $
 
                pop 1 p
                case refine counterModel po of
-                 Nothing -> loop Nothing
+                 Nothing -> loop Nothing invId'
                  Just po' -> do
                    infoM "Hind.invGenStep" $
                          "Refined " ++ show po ++ " to " ++ show po'
-                   refinement po' k
+                   refinement po' invId' k
 
-    loop Nothing
+    loop Nothing NoInv
+
   where (Script transitionSystem) = hindScript hindFile
         trans = hindTransition hindFile
         -- GetChan will drop candidates sent by the base process that
@@ -224,6 +261,10 @@ valuation p po time = do
           [Term_qual_identifier_ (Qual_identifier sv) [time]
              | sv <- varNames]
 
+-- FIXME: The 'PO' class and associated instances and code should be moved to a
+-- different module. Moreover, it should be split into a class for partial
+-- orders, and one that just has handles refinement, formula generation, and
+-- versioning.
 
 -- Invariant generation uses a partial order for candidate set generation
 class Show a => PO a where
@@ -390,9 +431,9 @@ toId :: Char -> Identifier
 toId c = Identifier [c]
 
 
-grRefine :: (Ord v, Ord a, Eq a) => Gr a -> [(a,v)] -> Maybe (Gr a)
+grRefine :: forall a v. (Ord v, Ord a, Eq a) => Gr a -> [(a,v)] -> Maybe (Gr a)
 grRefine prev@(oldBlocks,edges) model
-  | same prev next = Nothing
+  | grEmpty next || same prev next  = Nothing
   | otherwise = Just next
   where temp =  [((oldId,newId),q) | (n,v) <- model
            , then group by v -- Sorting is implicit.
@@ -401,6 +442,7 @@ grRefine prev@(oldBlocks,edges) model
            | newId <- [0..]
            ]
         blocks = [(id,block) |((_,id),block) <- temp]
+        next :: Gr a
         next = (blocks, S.fromList $ updateEdges ++ newEdges)
 
         updateEdges = [(newA,newB) | ((oldA,newA),_) <- temp
@@ -415,6 +457,8 @@ grRefine prev@(oldBlocks,edges) model
         same (aBlocks,aEdges) (bBlocks,bEdges) =
           S.fromList (map fst aBlocks) == S.fromList (map fst bBlocks) &&
           aEdges == bEdges
+
+
 
 
 grFormula :: Gr Identifier -> Identifier -> Term -> Term
@@ -447,14 +491,77 @@ grFormula (partition,edges) rel time =
                                    (Qual_identifier sid)
                                    [time]])]
 
+-- | A Graph is empty if it only has singleton blocks and no valid implications.
+grEmpty :: Gr a -> Bool
+grEmpty (partition,edges) =
+  (null [l | l@(_,(_:_:_)) <- partition]) &&
+  (null [e | e@(l,r) <- S.toList edges, not (S.member (r,l) edges)])
+
+-- | Handling invariant stuff.
+data InvId = NoInv | Inv Int deriving Show
+
+incInvId NoInv = Inv 0
+incInvId (Inv x) = Inv (x+1)
+
+invName NoInv = "noinv"
+invName (Inv i) = "_inv_" ++ show i
+
+addInvFormula NoInv term = term
+addInvFormula i term =
+  Term_qual_identifier_ (Qual_identifier (Identifier "and"))
+    [Term_qual_identifier_ (Qual_identifier (Identifier (invName i)))
+     [Term_qual_identifier (Qual_identifier (Identifier "step"))],
+     term]
+
+
+-- | Try to read a new invariant. In the case that there is one available,
+-- generate a new definition and return the name of the new invariant.
+-- TODO: This should really continue to read and build new invariants as long
+-- as more are available.
+getInvariant prover invChan curId = do
+  empty <- isEmptyChan invChan
+  if empty
+     then return Nothing
+     else do
+       inv <- readChan invChan
+       -- Generate a new definition
+       let nextInvId = incInvId curId
+       let invFun = Define_fun (invName nextInvId)
+                     [Sorted_var "step" (Sort_identifier (Identifier "Int"))] Sort_bool
+                     (addInvFormula curId
+                     (formula inv (Term_qual_identifier (Qual_identifier (Identifier "step")))))
+
+       sendCommand prover invFun
+       return (Just nextInvId)
+
+assertStepInv _ k NoInv = return ()
+assertStepInv p k invId =
+  mapM_ (sendCommand p)
+    [Assert (Term_qual_identifier_ (Qual_identifier (Identifier (invName invId)))
+                 [Term_qual_identifier_ (Qual_identifier (Identifier "-"))
+                  [Term_qual_identifier (Qual_identifier (Identifier "n")),
+                   Term_spec_constant (Spec_constant_numeral i)]])
+         | i <- [0..k]]
+
+assertBaseInv _ k NoInv = return ()
+assertBaseInv p k invId = do
+    mapM_ (sendCommand p) asserts
+  where asserts =
+          [Assert (Term_qual_identifier_ (Qual_identifier (Identifier (invName invId)))
+                   [Term_spec_constant (Spec_constant_numeral i)])
+           | i <- [0..k]]
 
 
 
-test = sequence_ [print (grFormula po (Identifier "<=") (k_time 0)) >>
-                  print part >>
-                  print e
-                  | po@(part,e) <- [a,b,c]]
 
-  where Just b = grRefine a m1
-        Just c = grRefine b m2
+getAndProcessInv p invChan invId onOld onNew = do
+  nextInv <- getInvariant p invChan invId
+  case nextInv of
+    Nothing -> do
+      onOld invId
+      return invId
+    Just newInv -> do
+      onNew newInv
+      return newInv
+
 

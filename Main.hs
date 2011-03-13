@@ -15,6 +15,9 @@ import System.Log.Handler(setFormatter,close)
 import System.Log.Handler.Simple
 import System.Log.Formatter
 
+import Control.Concurrent(forkIO)
+import Hind.Chan
+
 
 
 {-
@@ -48,6 +51,7 @@ main' = do
 
 -}
 main = do
+
   args <- getArgs
   case args of
     [proverCmd, fname, level] -> do
@@ -58,7 +62,7 @@ main = do
                        -- (simpleLogFormatter "[$time : $loggername : $prio] $msg")
       updateGlobalLogger "Hind" (addHandler h)
       updateGlobalLogger "Hind" (setLevel (read level))
-      -- updateGlobalLogger rootLoggerName (setLevel INFO)
+      updateGlobalLogger rootLoggerName (setLevel ERROR)
 
       infoM "Hind" ("Checking file " ++ fname)
 

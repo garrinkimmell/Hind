@@ -1,5 +1,9 @@
-(properties P)
-(transition trans)
+(set-info :transition trans)
+(set-info :properties (P))
+(set-info :states (___z3z___  ___z6z___ ___z7z___
+                   ___z8z___ ___z9z___ ___z10z___))
+(set-info :inputs (___z4z___ ___z5z___))
+(set-info :outputs (___z3z___))
 
 
 ;(set-option print-success false)

@@ -5,10 +5,13 @@ import Hind.Parser(HindFile(..))
 import Hind.PathCompression
 import Hind.Interaction
 import Hind.InvGen
+import Hind.Chan
+
 import Language.SMTLIB
 import Control.Exception
 import Control.Monad
-import Control.Concurrent
+
+import Control.Concurrent(ThreadId,forkIO,killThread,threadDelay)
 import Data.List(sortBy, groupBy)
 import System.Log.Logger
 
@@ -19,7 +22,7 @@ parCheck proverCmd hindFile = do
 
     resultChan <- newChan
 
-    -- Inferred invariants will show up on the invChan
+    -- Inferred invariants will show up on the invChan.
     invChan <- newChan
     (invGenBase,invGenStep) <- invGenProcess proverCmd hindFile' invChan
     let invChanBase = invChan
@@ -43,7 +46,7 @@ parCheck proverCmd hindFile = do
        else noticeM "Hind" "Failed" >> return Nothing
 
     -- Delay, just so that we can let invariant generation catch up.
-    -- threadDelay 10000000
+    threadDelay 100000000
 
     -- Clean up all the threads
     mapM_ killThread [invGenBase,invGenStep,baseProc,stepProc]
@@ -95,6 +98,7 @@ stepProcess proverCmd hindFile resultChan invChan = forkIO $
 
     -- Send '(not (prop n))'
     sendCommand p (Assert kstep)
+    sendCommand p (stateCharacterisic 0)
 
     let loop k = do
           -- Send '(trans (n-k+1)'

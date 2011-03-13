@@ -60,11 +60,7 @@ makeProverNamed cmd nm = do
         let (res,rem) = {-# SCC "parser" #-} runParser SMT.responses $ rest ++ (lexSMTLIB cnts)
         case res of
           Left err -> do
-            -- putStrLn $ "Parse Error: " ++ show err
-            -- putStrLn "with input "
-            -- print $ rest ++ (lexSMTLIB  cnts)
             return ()
-
           Right val -> do
             mapM_ (writeChan rspChannel) val
         reader rem
