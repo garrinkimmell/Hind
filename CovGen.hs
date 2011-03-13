@@ -16,17 +16,17 @@ main :: IO ()
 main = do
   args <- getArgs
   case args of
-    [fname,level] -> do
+    [cmd,fname,level] -> do
       setupLogger fname level
       res <- hindFile fname
       vecHandle <- openFile (fname ++ ".vectors") WriteMode
-      coverage res vecHandle
+      coverage cmd res vecHandle
 
-    _ -> putStrLn "usage: covgen <fname> <loglevel>"
+    _ -> putStrLn "usage: covgen <prover command> <hind file> <LOGLEVEL>"
 
 
 
-coverage file vecFile = do
+coverage proverCmd file vecFile = do
   bracket (makeProverNamed proverCmd "Hind.Coverage") closeProver $ \prover -> do
     sendScript prover (hindScript file)
 
@@ -94,7 +94,7 @@ fetchTrace file prover k = do
 
 
 
-proverCmd  = "ssh teme z3/bin/z3 -si -smt2 MODEL=true"
+-- proverCmd  = "ssh teme z3/bin/z3 -si -smt2 MODEL=true"
 
 data Trace = Trace Identifier [Term] deriving Show
 data TestVector = TestVector String Bool [Trace] deriving Show
