@@ -70,7 +70,7 @@ main = do
 
       updateGlobalLogger rootLoggerName (addHandler oh)
       updateGlobalLogger "Hind" (addHandler h)
-      -- updateGlobalLogger rootLoggerName (setLevel NOTICE)
+      updateGlobalLogger "Hind" (setLevel (read level))
 
       infoM "Hind" ("Checking file " ++ fname)
 
