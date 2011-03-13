@@ -60,11 +60,11 @@ main = do
       -- Set up the logger
       oh <- do lh <- streamHandler stdout NOTICE
                return $ setFormatter lh $
-                        (simpleLogFormatter "[$loggername : $prio] $msg")
+                        (simpleLogFormatter "[$time : $loggername : $prio] $msg")
 
       h <- do lh <- fileHandler (fname ++ ".log") (read level)
               return $  setFormatter lh $
-                       (simpleLogFormatter "[$loggername : $prio] $msg")
+                       (simpleLogFormatter "[$time : $loggername : $prio] $msg")
 
       updateGlobalLogger rootLoggerName (setHandlers ([] :: [GenericHandler ()]))
 
@@ -77,7 +77,7 @@ main = do
       res <- hindFile fname
 
       time $ parCheck proverCmd res
-      close h
+      -- close h
       return ()
 
     _ -> putStrLn "usage: hind <prover command> <hind file> <LOGLEVEL>"

@@ -1,7 +1,7 @@
 {-# LANGUAGE ScopedTypeVariables, StandaloneDeriving #-}
 module Hind.Interaction
   (Prover,
-   makeProver, makeProverNamed, closeProver,
+   makeProver, makeProverNamed, closeProver,name,
    sendCommand,
    checkSat,isSat,isUnsat,
    push,pop,
@@ -87,10 +87,10 @@ closeProver prover = do
 
 sendCommand :: Prover -> Command -> IO Command_response
 sendCommand prover cmd = do
-  debugM ("Hind." ++ (name prover)) ("req:" ++ show cmd)
+  debugM ((name prover) ++ ".interaction") ("req:" ++ show cmd)
   writeChan (requests prover) cmd
   rsp <- readChan (responses prover)
-  debugM ("Hind." ++ (name prover)) ("rsp:" ++ show rsp)
+  debugM ((name prover) ++ ".interaction") ("rsp:" ++ show rsp)
   return rsp
 
 

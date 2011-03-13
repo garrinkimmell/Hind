@@ -57,7 +57,7 @@ invGenBaseProcess ::
   IO ThreadId
 invGenBaseProcess proverCmd hindFile source sink isDone invChan = forkIO  $
   {-# SCC "invGenBaseProcess" #-}
-  bracket (makeProverNamed proverCmd "invGenBase") closeProver $ \p -> do
+  bracket (makeProverNamed proverCmd "Hind.invGenBase") closeProver $ \p -> do
 
     -- Initialize the prover with the transition system
     mapM_ (sendCommand p) transitionSystem
@@ -153,7 +153,7 @@ invGenStepProcess ::
   Chan (Integer,POVal) -> Chan POVal -> MVar POVal -> IO ThreadId
 invGenStepProcess proverCmd hindFile source sink isDone  = forkIO $
   {-# SCC "invGenStepProcess" #-}
-  bracket (makeProverNamed proverCmd "invStep") closeProver $ \p -> do
+  bracket (makeProverNamed proverCmd "Hind.invStep") closeProver $ \p -> do
     -- Initialize the prover with the transition system
     mapM_ (sendCommand p) transitionSystem
 
@@ -534,33 +534,52 @@ getInvariant prover invChan curId = do
        sendCommand prover invFun
        return (Just nextInvId)
 
-assertStepInv _ k NoInv = return ()
-assertStepInv p k invId =
-  mapM_ (sendCommand p)
-    [Assert (Term_qual_identifier_ (Qual_identifier (Identifier (invName invId)))
+-- | For a given invariant 'inv', assert (inv 0), (inv 1) ... (inv k)
+assertBaseInvState p k NoInv = return ()
+assertBaseInvState p k invId = do
+  sendCommand p
+    (Assert (Term_qual_identifier_ (Qual_identifier (Identifier (invName invId)))
+             [Term_spec_constant (Spec_constant_numeral k)]))
+  return ()
+
+-- | For a given invariant 'inv', assert
+-- (inv (- n 0)), (inv (- n 1)) ... (inv (- n k))
+assertStepInvState p k NoInv = return ()
+assertStepInvState p k invId = do
+    sendCommand p tm
+    return ()
+  where tm =
+         Assert (Term_qual_identifier_ (Qual_identifier (Identifier (invName invId)))
                  [Term_qual_identifier_ (Qual_identifier (Identifier "-"))
                   [Term_qual_identifier (Qual_identifier (Identifier "n")),
-                   Term_spec_constant (Spec_constant_numeral i)]])
-         | i <- [0..k]]
+                   Term_spec_constant (Spec_constant_numeral k)]])
 
-assertBaseInv _ k NoInv = return ()
+
+
+
+-- | For a given invariant 'inv', assert (inv k)
 assertBaseInv p k invId = do
-    mapM_ (sendCommand p) asserts
-  where asserts =
-          [Assert (Term_qual_identifier_ (Qual_identifier (Identifier (invName invId)))
-                   [Term_spec_constant (Spec_constant_numeral i)])
-           | i <- [0..k]]
+  sequence_ [assertBaseInvState p i invId | i <- [0..k]]
+
+-- | For a given invariant 'inv', assert (inv (- n k))
+assertStepInv _ k NoInv = return ()
+assertStepInv p k invId =
+  sequence_ [assertStepInvState p i invId | i <- [0..k]]
 
 
 
-
+-- | Try to fetch a new invariant. If a new one is available, apply 'onNew' to
+-- it; otherwise, apply 'onOld' to the old invariant. Return either the old
+-- invariant or else the newly-fetched invariant.
 getAndProcessInv p invChan invId onOld onNew = do
   nextInv <- getInvariant p invChan invId
+
   case nextInv of
     Nothing -> do
       onOld invId
       return invId
     Just newInv -> do
+      infoM (name p) $  "Asserting new invariant" ++ show newInv
       onNew newInv
       return newInv
 

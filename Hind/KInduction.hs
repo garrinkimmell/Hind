@@ -24,13 +24,22 @@ parCheck proverCmd hindFile = do
 
     -- Inferred invariants will show up on the invChan.
     invChan <- newChan
-    (invGenBase,invGenStep) <- invGenProcess proverCmd hindFile' invChan
-    let invChanBase = invChan
+
+    -- FIXME: This will space leak, because it leaves an invChan that's not
+    -- drained. It may be better to pass 'invChan' directly to the base or step
+    -- process.
     invChanBase <- dupChan invChan
     invChanStep <- dupChan invChan
 
+    -- First start the main proof process
     baseProc <- baseProcess proverCmd hindFile' resultChan invChanBase
     stepProc <- stepProcess proverCmd hindFile' resultChan invChanStep
+
+
+    -- Now kick off the invariant generation process
+    (invGenBase,invGenStep) <- invGenProcess proverCmd hindFile' invChan
+
+
     let loop basePass = do
           res <- readChan resultChan
           -- putStrLn $ show res
@@ -60,12 +69,15 @@ data ProverResult = BasePass Integer | BaseFail Integer | StepPass Integer | Ste
 baseProcess
   :: String -> HindFile -> Chan ProverResult -> Chan POVal -> IO ThreadId
 baseProcess proverCmd hindFile resultChan invChan = forkIO $
-  bracket (makeProverNamed proverCmd "baseProcess") closeProver $ \p -> do
+  bracket (makeProverNamed proverCmd "Hind.baseProcess") closeProver $ \p -> do
     infoM "Hind.baseProcess" "Base Prover Started"
     _ <- mapM (sendCommand p) model
     infoM "Hind.baseProcess" "System Defined"
-    let loop k = do
+    let loop k invId = do
           -- checkInvariant p invChan
+          invId' <- getAndProcessInv p invChan invId
+                    (assertBaseInvState p k)
+                    (assertBaseInv p k)
 
           -- send (trans (k - 1)
           sendCommand p (Assert (trans (k - 1)))
@@ -75,10 +87,10 @@ baseProcess proverCmd hindFile resultChan invChan = forkIO $
           if res
              then do
                writeChan resultChan (BasePass k)
-               loop (k+1)
+               loop (k+1) invId'
              else do
                writeChan resultChan (BaseFail k)
-    loop 1
+    loop 1 NoInv
   where trans i = Term_qual_identifier_ (Qual_identifier transition)
                     [Term_spec_constant (Spec_constant_numeral i)]
 
@@ -92,7 +104,7 @@ baseProcess proverCmd hindFile resultChan invChan = forkIO $
 
 stepProcess :: String -> HindFile -> Chan ProverResult -> Chan POVal -> IO ThreadId
 stepProcess proverCmd hindFile resultChan invChan = forkIO $
-  bracket (makeProverNamed proverCmd "stepProcess") closeProver $ \p -> do
+  bracket (makeProverNamed proverCmd "Hind.stepProcess") closeProver $ \p -> do
     infoM "Hind.stepProcess" "Step Prover Started"
     _ <- mapM (sendCommand p) model
     infoM "Hind.stepProcess" "System Defined"
@@ -103,7 +115,13 @@ stepProcess proverCmd hindFile resultChan invChan = forkIO $
     -- Send path compression
     sendCommand p (stateCharacterisic 0)
 
-    let loop k = do
+    let loop k invId = do
+          -- Add any additional invariants.
+          invId' <- getAndProcessInv p invChan invId
+                    (assertStepInvState p k)
+                    (assertStepInv p k)
+
+
           -- Send '(trans (n-k+1)'
           sendCommand p (Assert (trans (k - 1)))
 
@@ -119,8 +137,8 @@ stepProcess proverCmd hindFile resultChan invChan = forkIO $
                  writeChan resultChan (StepPass k)
                else do
                  writeChan resultChan (StepFail k)
-                 loop (k+1)
-    loop 1
+                 loop (k+1) invId'
+    loop 1 NoInv
 
     where prop i = Term_qual_identifier_ (Qual_identifier  property)
                    [prev i]
@@ -138,15 +156,6 @@ stepProcess proverCmd hindFile resultChan invChan = forkIO $
           transition = hindTransition hindFile
 
 
-
-
-checkInvariant prover invChan = do
-  empty <- isEmptyChan invChan
-  unless empty $ do
-    inv <- readChan invChan
-    putStrLn "Got an invariant"
-    _ <- sendCommand prover inv
-    return ()
 
 
 -- Installation for testing
