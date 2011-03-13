@@ -25,7 +25,7 @@ Executable hind
        buildable: True
        Build-depends: smt-lib, time
        Main-Is:        Main.hs
-       Ghc-Options:  -threaded -O2 -rtsopts -auto
+       Ghc-Options:  -threaded -O2  -auto
 
 source-repository head
   type: git
