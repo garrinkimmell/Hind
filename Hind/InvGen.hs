@@ -42,8 +42,9 @@ invGenProcess proverCmd hindFile invChan = do
           [genPO sort states i
            -- FIXME: No reason to reverse this, it was just so that int
            -- candidates were checked before bool.
-           | (sort,states) <-  reverse $ hindStates hindFile
-           | i <- [0..]]
+           | (sort,states) <-  reverse $ hindStates hindFile,sort `elem` validSorts
+           | i <- [0..] ]
+        validSorts = [Sort_identifier (Identifier "Int"), Sort_identifier (Identifier "Bool")]
 
 
 -- | The refinement process for the base case of invariant generation based on a partial order.

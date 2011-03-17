@@ -49,6 +49,10 @@ pathCompressionSig hf = decls  ++ defines ++ top
 
 
 
-        pcname sort = "___path_compression_" ++ show sort
+        pcname sort = "___path_compression_" ++ pcSort sort
+
+        pcSort (Sort_bitvec n) = "bitvec_" ++ show n
+        pcSort s = show s
+
         idx = Term_qual_identifier (Qual_identifier (Identifier idxName))
         idxName = "___idx"

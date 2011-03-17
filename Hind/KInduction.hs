@@ -17,8 +17,9 @@ import System.Log.Logger
 
 parCheck :: String -> HindFile -> IO Bool
 parCheck proverCmd hindFile = do
-    -- Add in path compression
-    let hindFile' = addPathCompression hindFile
+    -- Add in path compression and step vars.
+    let hindFile' = addStepVars $ addPathCompression hindFile
+
 
     resultChan <- newChan
 
@@ -58,7 +59,7 @@ parCheck proverCmd hindFile = do
     -- threadDelay 100000000
 
     -- Clean up all the threads
-    mapM_ killThread [invGenBase,invGenStep,baseProc,stepProc]
+    -- mapM_ killThread [invGenBase,invGenStep,baseProc,stepProc]
     return result
 
 
@@ -154,6 +155,19 @@ stepProcess proverCmd hindFile resultChan invChan = forkIO $
           Script model = hindScript hindFile
           [property] = hindProperties hindFile
           transition = hindTransition hindFile
+
+
+addStepVars hf = hf { hindScript = Script (stepCmds ++ scr) }
+  where Script scr = hindScript hf
+        stepCmds = [Declare_fun "_base" [] (Sort_identifier (Identifier "Int")),
+                    Assert (Term_qual_identifier_ (Qual_identifier (Identifier "="))
+                            [Term_qual_identifier (Qual_identifier (Identifier "_base")),
+                             Term_spec_constant (Spec_constant_numeral 0)]),
+                    Declare_fun "n" [] (Sort_identifier (Identifier "Int")),
+                    Assert (Term_qual_identifier_ (Qual_identifier (Identifier ">="))
+                            [Term_qual_identifier (Qual_identifier (Identifier "n")),
+                             Term_spec_constant (Spec_constant_numeral 0)])
+                   ]
 
 
 
