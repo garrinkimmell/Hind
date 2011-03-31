@@ -2,6 +2,7 @@ module Hind.KInduction
   (parCheck) where
 
 import Hind.Parser(HindFile(..))
+import Hind.Options as Opts
 import Hind.PathCompression
 import Hind.Interaction
 import Hind.InvGen
@@ -11,18 +12,22 @@ import Language.SMTLIB
 import Control.Exception
 import Control.Monad
 
-import Control.Concurrent(ThreadId,forkIO,killThread,threadDelay)
+import Control.Concurrent(ThreadId,forkIO,killThread,threadDelay,newMVar, modifyMVar_,readMVar)
 import Data.List(sortBy, groupBy)
 import System.Log.Logger
 
-parCheck :: String -> HindFile -> IO Bool
-parCheck proverCmd hindFile = do
+
+parCheck :: HindOpts -> HindFile -> IO Bool
+parCheck opts hindFile = do
+    let proverCmd = getSMTCmd opts
     -- Add in path compression and step vars.
     let hindFile' = addStepVars $ addPathCompression hindFile
 
 
-    resultChan <- newChan
+    -- We track the fork  threads, so we can kill them.
+    children <- newMVar []
 
+    resultChan <- newChan
     -- Inferred invariants will show up on the invChan.
     invChan <- newChan
 
@@ -32,13 +37,18 @@ parCheck proverCmd hindFile = do
     invChanBase <- dupChan invChan
     invChanStep <- dupChan invChan
 
+
     -- First start the main proof process
     baseProc <- baseProcess proverCmd hindFile' resultChan invChanBase
     stepProc <- stepProcess proverCmd hindFile' resultChan invChanStep
+    modifyMVar_ children (\tids -> return $ tids ++ [baseProc,stepProc])
 
 
-    -- Now kick off the invariant generation process
-    (invGenBase,invGenStep) <- invGenProcess proverCmd hindFile' invChan
+
+    when (Opts.invGen opts) $ do
+      -- Now kick off the invariant generation process
+      (invGenBase,invGenStep) <- invGenProcess proverCmd hindFile' invChan
+      modifyMVar_ children (\tids -> return $ tids ++ [invGenBase,invGenStep])
 
 
     let loop basePass = do
@@ -55,11 +65,9 @@ parCheck proverCmd hindFile = do
        then noticeM "Hind" "Passed" >> return Nothing
        else noticeM "Hind" "Failed" >> return Nothing
 
-    -- Delay, just so that we can let invariant generation catch up.
-    -- threadDelay 100000000
-
     -- Clean up all the threads
-    -- mapM_ killThread [invGenBase,invGenStep,baseProc,stepProc]
+    tids <- readMVar children
+    mapM_ killThread tids
     return result
 
 

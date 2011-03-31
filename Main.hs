@@ -4,6 +4,7 @@ import Hind.KInduction
 import Hind.Parser
 import Hind.Chan
 import Hind.Logging
+import Hind.Options
 
 import Text.Printf
 import Control.Exception
@@ -19,7 +20,6 @@ import System.Log.Formatter
 import System.IO
 
 import Control.Concurrent(forkIO)
-
 
 
 
@@ -40,36 +40,15 @@ time a = do
              ((fromRational $toRational $ diffUTCTime wallEnd wallStart) :: Double)
     return v
 
-{-
-main' = do
-  args <- getArgs
-  case args of
-    (proverCmd:modelFile:property:rest) ->
-      do cnts <- readFile modelFile
-         putStrLn "Working..."
-         let scr@(Script model) = parseScript cnts
-         withArgs rest $
-	          defaultMain [bench "parallel" $ parCheck proverCmd model property
-                              ,bench "sequential" $ seqCheck proverCmd model property]
-
--}
 main = do
+  options <- getOptions
+  setupLogger (getLogFile options) (logLevel options)
+  infoM "Hind" ("Checking file " ++ (file options))
+  debugM "Hind" $ "Using smt command " ++ (getSMTCmd options)
 
-  args <- getArgs
-  case args of
-    [proverCmd, fname, level] -> do
-      -- Set up the logger
-      setupLogger fname level
+  parsed <- hindFile (file options)
+  time $ parCheck options parsed
 
-      infoM "Hind" ("Checking file " ++ fname)
-
-      res <- hindFile fname
-
-      time $ parCheck proverCmd res
-      -- close h
-      return ()
-
-    _ -> putStrLn "usage: hind <prover command> <hind file> <LOGLEVEL>"
 
 
 z3 :: [Char]

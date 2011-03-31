@@ -18,7 +18,7 @@ setupLogger fname level = do
                return $ setFormatter lh $
                         (simpleLogFormatter "[$loggername : $prio] $msg")
 
-      h <- do lh <- fileHandler (fname ++ ".log") (read level)
+      h <- do lh <- fileHandler fname level
               return $  setFormatter lh $
                        (simpleLogFormatter "[$loggername : $prio] $msg")
                        -- (simpleLogFormatter "[$time : $loggername : $prio] $msg")
@@ -27,4 +27,4 @@ setupLogger fname level = do
 
       updateGlobalLogger rootLoggerName (addHandler oh)
       updateGlobalLogger "Hind" (addHandler h)
-      updateGlobalLogger "Hind" (setLevel (read level))
+      updateGlobalLogger "Hind" (setLevel level)
