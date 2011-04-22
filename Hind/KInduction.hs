@@ -12,13 +12,15 @@ import Language.SMTLIB
 import Control.Exception
 import Control.Monad
 
-import Control.Concurrent(ThreadId,forkIO,killThread,threadDelay,newMVar, modifyMVar_,readMVar)
+import Control.Concurrent
+  (ThreadId,forkIO,killThread,threadDelay,newMVar, modifyMVar_,readMVar,
+   newEmptyMVar, putMVar, takeMVar)
 import Data.List(sortBy, groupBy)
 import System.Log.Logger
 
 
 parCheck :: HindOpts -> HindFile -> IO Bool
-parCheck opts hindFile = do
+parCheck opts hindFile = withTimeout $ do
     let proverCmd = getSMTCmd opts
     -- Add in path compression and step vars.
     let hindFile' = addStepVars $ addPathCompression hindFile
@@ -69,6 +71,26 @@ parCheck opts hindFile = do
     tids <- readMVar children
     mapM_ killThread tids
     return result
+  where withTimeout m
+          | Nothing <- timeout opts = m
+          | Just secs <- timeout opts = do
+             result <- newEmptyMVar
+             workerTid <- forkIO $ (fmap Just m) >>= putMVar result
+             timeoutTid <- forkIO $ do
+                               threadDelay (round (secs * 1000000.0))
+                               putMVar result Nothing
+             r <- takeMVar result
+             mapM_ killThread [workerTid,timeoutTid]
+             case r of
+               Just val -> return val
+               Nothing -> do
+                 noticeM "Hind" (file opts ++ " Timeout (" ++ show secs ++ " seconds)")
+                 return False
+
+
+
+
+
 
 
 data ProverResult = BasePass Integer | BaseFail Integer | StepPass Integer | StepFail Integer
