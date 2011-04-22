@@ -43,6 +43,7 @@ data HindOpts =  HindOpts {
 
   -- Hind Options
   , invGen :: Bool
+  , timeout :: Maybe Float -- timeout, expressed in seconds
 
   } deriving (Show,Data,Typeable)
 
@@ -59,6 +60,9 @@ hindArgs = HindOpts {
            &= groupname "SMT Solver"
        , invGen = False &= help "Enable Invariant Generation" &= typ "Boolean"
                   &= groupname "Model Checking Options"
+       , timeout = Nothing
+             &= help "Timeout for model checking"
+             &= groupname "Model Checking Options"
        , logLevel = NOTICE &= help "Logging Level (DEBUG,INFO,NOTICE)"
            &= groupname "Logging"
        , logFile = Nothing &= help "Log File"
