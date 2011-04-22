@@ -77,6 +77,7 @@ parCheck opts hindFile = withTimeout $ do
              result <- newEmptyMVar
              workerTid <- forkIO $ (fmap Just m) >>= putMVar result
              timeoutTid <- forkIO $ do
+                               -- Multiply by a million to get microseconds.
                                threadDelay (round (secs * 1000000.0))
                                putMVar result Nothing
              r <- takeMVar result
