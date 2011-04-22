@@ -1,9 +1,6 @@
 module Main where
 
-
-import Hind.Parser
-import Hind.Interaction
-import Hind.Logging
+import Hind
 
 import Language.SMTLIB
 

@@ -1,10 +1,16 @@
 module Main where
 
-import Hind.KInduction
-import Hind.Parser
-import Hind.Chan
-import Hind.Logging
-import Hind.Options
+import Hind(
+       getOptions,file, getSMTCmd, -- options
+       hindFile, -- parser
+       setupLogger, getLogFile, logLevel, -- logging
+       parCheck -- K-induction
+       )
+-- import Hind.KInduction
+-- import Hind.Parser
+-- import Hind.Chan
+-- import Hind.Logging
+-- import Hind.Options
 
 import Text.Printf
 import Control.Exception

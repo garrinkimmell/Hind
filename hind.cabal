@@ -9,7 +9,7 @@ Maintainer:          Garrin Kimmell <garrin.kimmell@gmail.com>
 Copyright:           (c) 2010 The University of Iowa
 Stability:	     alpha
 build-type: 	     Simple
-Cabal-Version:       >= 1.6
+Cabal-Version:       >= 1.8
 
 
 Library
@@ -19,18 +19,28 @@ Library
                  hslogger, mtl, stm, cmdargs, filepath
 
   Ghc-Options: -threaded -O2
-  Exposed-modules: Hind.KInduction, Hind.Interaction
+  Exposed-modules: Hind
+  Other-modules: Hind.KInduction
+                 Hind.Interaction
+                 Hind.Options
+                 Hind.Logging
+                 Hind.Chan
+                 Hind.Parser
+                 Hind.PathCompression
+                 Hind.InvGen
 
 Executable hind
        buildable: True
-       Build-depends: smt-lib, time
-       Main-Is:        Main.hs
+       Build-depends: smt-lib, time, hind, base, hslogger
+       Main-Is:        HindMain.hs
+       Hs-source-dirs: executables
        Ghc-Options:  -threaded -O2  -auto
 
 Executable covgen
        Buildable: True
-       Build-depends: smt-lib, time
+       Build-depends: smt-lib, time, hind, base, hslogger
        Main-Is:        CovGen.hs
+       Hs-source-dirs: executables
        Ghc-Options:  -threaded -O2  -auto
 
 
