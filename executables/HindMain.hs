@@ -1,7 +1,7 @@
 module Main where
 
 import Hind(
-       getOptions,file, getSMTCmd, -- options
+       HindOpts,getOptions,file, getSMTCmd, -- options
        hindFile, -- parser
        setupLogger, getLogFile, logLevel, -- logging
        parCheck -- K-induction
@@ -24,6 +24,8 @@ import System.Log.Handler(setFormatter,close)
 import System.Log.Handler.Simple
 import System.Log.Formatter
 import System.IO
+import System.Directory(doesDirectoryExist,getDirectoryContents)
+import System.FilePath(takeExtension)
 
 import Control.Concurrent(forkIO)
 
@@ -41,19 +43,39 @@ time a = do
     end   <- getCPUTime
     wallEnd <- getCurrentTime
     let diff = (fromIntegral (end - start)) / (10^12)
-    printf "Computation time: %0.6f sec\n" (diff :: Double)
-    printf "Wall time: %0.6f sec\n"
-             ((fromRational $toRational $ diffUTCTime wallEnd wallStart) :: Double)
+    noticeM "Hind" $ printf "Computation time: %0.6f sec" (diff :: Double)
+    noticeM "Hind" $ printf "Wall time: %0.6f sec"
+                 ((fromRational $toRational $ diffUTCTime wallEnd wallStart) :: Double)
     return v
 
 main = do
   options <- getOptions
   setupLogger (getLogFile options) (logLevel options)
-  infoM "Hind" ("Checking file " ++ (file options))
   debugM "Hind" $ "Using smt command " ++ (getSMTCmd options)
+  files <- getFiles options
+  mapM_ checkFile files
 
-  parsed <- hindFile (file options)
-  time $ parCheck options parsed
+
+checkFile :: HindOpts -> IO Bool
+checkFile options = handle handler $ do
+    noticeM "Hind" ("Checking file " ++ (file options))
+    parsed <- hindFile (file options)
+    time $ parCheck options parsed
+  where handler :: SomeException -> IO Bool
+        handler e = do
+          noticeM "Hind" $
+            printf "%s failed with error:%s\n" (file options) (show e)
+          return False
+
+getFiles :: HindOpts -> IO [HindOpts]
+getFiles opts = do
+  isDirectory <- doesDirectoryExist (file opts)
+  if isDirectory
+    then do
+      infoM "Hind" $ printf "Checking directory %s" (file opts)
+      contents <- getDirectoryContents (file opts)
+      return [opts { file = f } | f <- contents, takeExtension f == ".smt2"]
+    else return [opts]
 
 
 

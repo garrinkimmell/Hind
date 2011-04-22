@@ -31,14 +31,14 @@ Library
 
 Executable hind
        buildable: True
-       Build-depends: smt-lib, time, hind, base, hslogger
+       Build-depends: smt-lib, time, hind, base, hslogger, filepath, directory
        Main-Is:        HindMain.hs
        Hs-source-dirs: executables
        Ghc-Options:  -threaded -O2  -auto
 
 Executable covgen
        Buildable: True
-       Build-depends: smt-lib, time, hind, base, hslogger
+       Build-depends: smt-lib, time, hind, base, hslogger, filepath, directory
        Main-Is:        CovGen.hs
        Hs-source-dirs: executables
        Ghc-Options:  -threaded -O2  -auto

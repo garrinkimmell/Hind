@@ -62,8 +62,8 @@ parCheck opts hindFile = do
 
     result <- loop 1
     if result
-       then noticeM "Hind" "Passed" >> return Nothing
-       else noticeM "Hind" "Failed" >> return Nothing
+       then noticeM "Hind" (file opts ++ " Passed") >> return Nothing
+       else noticeM "Hind" (file opts ++ " Failed") >> return Nothing
 
     -- Clean up all the threads
     tids <- readMVar children
