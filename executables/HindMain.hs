@@ -50,7 +50,7 @@ time a = do
 
 main = do
   options <- getOptions
-  setupLogger (getLogFile options) (logLevel options)
+  setupLogger (getLogFile options)  options
   debugM "Hind" $ "Using smt command " ++ (getSMTCmd options)
   files <- getFiles options
   mapM_ checkFile files

@@ -14,7 +14,7 @@ main = do
   args <- getArgs
   case args of
     [cmd,fname,level] -> do
-      setupLogger fname (read level)
+      -- setupLogger fname level)
       res <- hindFile fname
       bracket (openFile (fname ++ ".vectors") WriteMode) hClose
               (coverage cmd res)

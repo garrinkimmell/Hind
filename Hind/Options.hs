@@ -34,7 +34,7 @@ data HindOpts =  HindOpts {
   -- Input file (transition system)
     file :: String
    -- Logging
-  , logLevel :: Priority -- The output log level
+  , logLevel :: String -- The output log level
   , logFile :: Maybe String
   -- SMT Solver
   , smtCmd :: String -- The Solver
@@ -63,7 +63,7 @@ hindArgs = HindOpts {
        , timeout = Nothing
              &= help "Timeout for model checking"
              &= groupname "Model Checking Options"
-       , logLevel = NOTICE &= help "Logging Level (DEBUG,INFO,NOTICE)"
+       , logLevel = "Hind=NOTICE" &= help "Logging Level (DEBUG,INFO,NOTICE)"
            &= groupname "Logging"
        , logFile = Nothing &= help "Log File"
            &= groupname "Logging"
@@ -74,8 +74,3 @@ hindArgs = HindOpts {
   help "Prove safety properties using k-induction" &=
   summary "hind v0.3, (C) Garrin Kimmell 2011"
 
-instance Default Priority where
-  def = NOTICE
-
-deriving instance Data Priority
-deriving instance Typeable Priority
