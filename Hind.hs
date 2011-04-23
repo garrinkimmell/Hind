@@ -4,7 +4,8 @@ module Hind(
        module Hind.Interaction,
        module Hind.Options,
        module Hind.Logging,
-       module Hind.Parser
+       module Hind.Parser,
+       module Hind.ConnectionPool
 
   ) where
 
@@ -13,3 +14,4 @@ import Hind.Interaction
 import Hind.Options
 import Hind.Logging
 import Hind.Parser
+import Hind.ConnectionPool

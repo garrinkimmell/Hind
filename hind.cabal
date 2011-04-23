@@ -28,6 +28,7 @@ Library
                  Hind.Parser
                  Hind.PathCompression
                  Hind.InvGen
+                 Hind.ConnectionPool
 
 Executable hind
        buildable: True

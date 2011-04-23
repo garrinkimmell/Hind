@@ -5,6 +5,8 @@ import Hind.Parser(HindFile(..))
 import Hind.Interaction
 import Hind.PathCompression
 import Hind.Chan
+import Hind.ConnectionPool
+
 import Language.SMTLIB
 
 import qualified Data.Set as S
@@ -20,7 +22,7 @@ import System.Log.Logger
 
 -- Invariant Generation
 -- invGenProcess proverCmd model property initPO invChan = forkIO $ do
-invGenProcess proverCmd hindFile invChan = do
+invGenProcess pool hindFile invChan = do
   candidatesChan <- newChan
   basePassed <- newChan
   candidateDone <- newEmptyMVar
@@ -31,11 +33,11 @@ invGenProcess proverCmd hindFile invChan = do
   stepProcInv <- dupChan invChan
 
   baseProc <-
-    invGenBaseProcess proverCmd hindFile candidatesChan
+    invGenBaseProcess pool hindFile candidatesChan
                       basePassed candidateDone baseProcInv
 
   stepProc <-
-    invGenStepProcess proverCmd hindFile basePassed stepProcInv candidateDone
+    invGenStepProcess pool hindFile basePassed stepProcInv candidateDone
   writeList2Chan candidatesChan candidates
   return (baseProc,stepProc)
   where candidates =
@@ -49,16 +51,16 @@ invGenProcess proverCmd hindFile invChan = do
 
 -- | The refinement process for the base case of invariant generation based on a partial order.
 invGenBaseProcess ::
-  String -> -- ^ Prover command
+  ConnectionPool -> -- ^ Prover connection pool
   HindFile -> -- ^ Input File
   Chan POVal -> -- ^ Source for candidates
   Chan (Integer, POVal) ->  -- ^ Sink to step case
   MVar POVal ->  -- ^ Feedback from step case
   Chan POVal -> -- ^ A source for invariants
   IO ThreadId
-invGenBaseProcess proverCmd hindFile source sink isDone invChan = forkIO  $
+invGenBaseProcess pool hindFile source sink isDone invChan =
   {-# SCC "invGenBaseProcess" #-}
-  bracket (makeProverNamed proverCmd "Hind.invGenBase") closeProver $ \p -> do
+  withProver pool "Hind.invGenBase" $ \p -> do
 
     -- Initialize the prover with the transition system
     mapM_ (sendCommand p) transitionSystem
@@ -150,11 +152,11 @@ invGenBaseProcess proverCmd hindFile source sink isDone invChan = forkIO  $
 -- this process has verified) and input (for invariants that some other process
 -- has generated)
 invGenStepProcess ::
-  String -> HindFile ->
+  ConnectionPool -> HindFile ->
   Chan (Integer,POVal) -> Chan POVal -> MVar POVal -> IO ThreadId
-invGenStepProcess proverCmd hindFile source sink isDone  = forkIO $
+invGenStepProcess pool hindFile source sink isDone  =
   {-# SCC "invGenStepProcess" #-}
-  bracket (makeProverNamed proverCmd "Hind.invStep") closeProver $ \p -> do
+  withProver pool "Hind.invStep" $ \p -> do
     -- Initialize the prover with the transition system
     mapM_ (sendCommand p) transitionSystem
 

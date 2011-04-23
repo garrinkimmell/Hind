@@ -4,7 +4,7 @@ module Hind.Interaction
    makeProver, makeProverNamed, closeProver,name,
    sendCommand, sendScript,
    checkSat,isSat,isUnsat,
-   push,pop,
+   push,pop,reset,
    getModel
    ) where
 
@@ -25,6 +25,7 @@ data Prover = Prover { requests :: Chan Command
                      , threads :: [ThreadId]
                      , pid :: ProcessHandle
                      , name :: String
+                     , depth :: MVar Int
                      }
 
 -- Create a prover connection
@@ -70,7 +71,8 @@ makeProverNamed cmd nm = do
              (hClose pipe_out)
              (reader [])
 
-  return $ Prover reqChannel rspChannel [readerThd,writerThd] ph nm
+  depth <- newMVar 0
+  return $ Prover reqChannel rspChannel [readerThd,writerThd] ph nm depth
 
 makeProver :: String -> IO Prover
 makeProver cmd = do
@@ -121,8 +123,19 @@ isUnsat = fmap unsat . checkSat
 
 -- | Manipulate prover state stack
 push,pop :: Int -> Prover -> IO Command_response
-push i = flip sendCommand (Push i)
-pop i = flip sendCommand (Pop i)
+push i p = do
+     cur <- takeMVar (depth p)
+     putMVar (depth p) (cur + i)
+     sendCommand p (Push i)
+
+pop i p = do
+    cur <- takeMVar (depth p)
+    putMVar (depth p) (cur - i)
+    sendCommand p (Pop i)
+
+reset p = do
+   cur <- readMVar (depth p)
+   pop cur p
 
 
 

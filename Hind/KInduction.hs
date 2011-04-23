@@ -7,6 +7,7 @@ import Hind.PathCompression
 import Hind.Interaction
 import Hind.InvGen
 import Hind.Chan
+import Hind.ConnectionPool
 
 import Language.SMTLIB
 import Control.Exception
@@ -19,9 +20,10 @@ import Data.List(sortBy, groupBy)
 import System.Log.Logger
 
 
-parCheck :: HindOpts -> HindFile -> IO Bool
-parCheck opts hindFile = withTimeout $ do
-    let proverCmd = getSMTCmd opts
+parCheck :: ConnectionPool -> HindOpts -> HindFile -> IO Bool
+parCheck pool opts hindFile = withTimeout $ do
+
+
     -- Add in path compression and step vars.
     let hindFile' = addStepVars $ addPathCompression hindFile
 
@@ -41,15 +43,15 @@ parCheck opts hindFile = withTimeout $ do
 
 
     -- First start the main proof process
-    baseProc <- baseProcess proverCmd hindFile' resultChan invChanBase
-    stepProc <- stepProcess proverCmd hindFile' resultChan invChanStep
+    baseProc <- baseProcess pool hindFile' resultChan invChanBase
+    stepProc <- stepProcess pool hindFile' resultChan invChanStep
     modifyMVar_ children (\tids -> return $ tids ++ [baseProc,stepProc])
 
 
 
     when (Opts.invGen opts) $ do
       -- Now kick off the invariant generation process
-      (invGenBase,invGenStep) <- invGenProcess proverCmd hindFile' invChan
+      (invGenBase,invGenStep) <- invGenProcess pool hindFile' invChan
       modifyMVar_ children (\tids -> return $ tids ++ [invGenBase,invGenStep])
 
 
@@ -91,17 +93,14 @@ parCheck opts hindFile = withTimeout $ do
 
 
 
-
-
-
 data ProverResult = BasePass Integer | BaseFail Integer | StepPass Integer | StepFail Integer
   deriving Show
 
 -- baseProcess proverCmd model property resultChan invChan = forkIO $
 baseProcess
-  :: String -> HindFile -> Chan ProverResult -> Chan POVal -> IO ThreadId
-baseProcess proverCmd hindFile resultChan invChan = forkIO $
-  bracket (makeProverNamed proverCmd "Hind.baseProcess") closeProver $ \p -> do
+  :: ConnectionPool -> HindFile -> Chan ProverResult -> Chan POVal -> IO ThreadId
+baseProcess pool hindFile resultChan invChan =
+  withProver pool "Hind.baseProcess" $  \p -> do
     infoM "Hind.baseProcess" "Base Prover Started"
     _ <- mapM (sendCommand p) model
     infoM "Hind.baseProcess" "System Defined"
@@ -134,9 +133,9 @@ baseProcess proverCmd hindFile resultChan invChan = forkIO $
         [property] = hindProperties hindFile
         transition = hindTransition hindFile
 
-stepProcess :: String -> HindFile -> Chan ProverResult -> Chan POVal -> IO ThreadId
-stepProcess proverCmd hindFile resultChan invChan = forkIO $
-  bracket (makeProverNamed proverCmd "Hind.stepProcess") closeProver $ \p -> do
+stepProcess :: ConnectionPool -> HindFile -> Chan ProverResult -> Chan POVal -> IO ThreadId
+stepProcess pool hindFile resultChan invChan =
+  withProver pool "Hind.stepProcess" $  \p -> do
     infoM "Hind.stepProcess" "Step Prover Started"
     _ <- mapM (sendCommand p) model
     infoM "Hind.stepProcess" "System Defined"

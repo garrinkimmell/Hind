@@ -4,7 +4,8 @@ import Hind(
        HindOpts,getOptions,file, getSMTCmd, -- options
        hindFile, -- parser
        setupLogger, getLogFile, logLevel, -- logging
-       parCheck -- K-induction
+       parCheck, -- K-induction
+       ConnectionPool, newConnectionPool
        )
 -- import Hind.KInduction
 -- import Hind.Parser
@@ -52,15 +53,16 @@ main = do
   options <- getOptions
   setupLogger (getLogFile options)  options
   debugM "Hind" $ "Using smt command " ++ (getSMTCmd options)
+  pool <- newConnectionPool (getSMTCmd options) 5
   files <- getFiles options
-  mapM_ checkFile files
+  mapM_ (checkFile pool) files
 
 
-checkFile :: HindOpts -> IO Bool
-checkFile options = handle handler $ do
+checkFile :: ConnectionPool -> HindOpts -> IO Bool
+checkFile pool options = handle handler $ do
     noticeM "Hind" ("Checking file " ++ (file options))
     parsed <- hindFile (file options)
-    time $ parCheck options parsed
+    time $ parCheck pool options parsed
   where handler :: SomeException -> IO Bool
         handler e = do
           noticeM "Hind" $
