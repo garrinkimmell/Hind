@@ -60,7 +60,7 @@ invGenBaseProcess ::
   IO ThreadId
 invGenBaseProcess pool hindFile source sink isDone invChan =
   {-# SCC "invGenBaseProcess" #-}
-  withProver pool "Hind.invGenBase" $ \p -> do
+  withProver pool "Hind.invGen.Base" $ \p -> do
 
     -- Initialize the prover with the transition system
     mapM_ (sendCommand p) transitionSystem
@@ -76,12 +76,12 @@ invGenBaseProcess pool hindFile source sink isDone invChan =
               Just po'
                 | revMajor po == revMajor po'
                    -> do
-                       infoM "Hind.invGenBase" $
+                       infoM "Hind.invGen.Base" $
                                "Got isDone of " ++ show po' ++ show po
                        po' <- readChan source
                        return (po',0)
                 | otherwise -> do
-                       infoM "Hind.invGenBase" $
+                       infoM "Hind.invGen.Base" $
                                "Got isDone of " ++ show po' ++ show po
                        return (po,k)
               Nothing -> return (po,k)
@@ -107,7 +107,7 @@ invGenBaseProcess pool hindFile source sink isDone invChan =
           let candidateFormula :: Term
               candidateFormula = formula po (k_time k)
           push 1 p
-          infoM "Hind.invGenBase" $
+          infoM "Hind.invGen.Base" $
                   "Checking candidate:" ++ show candidateFormula ++
                   "(" ++ show k ++ ")"
           -- negate the candidate
@@ -117,7 +117,7 @@ invGenBaseProcess pool hindFile source sink isDone invChan =
                then do
                  pop 1 p
                  -- Assert the invariant for k
-                 infoM "Hind.invGenBase" $
+                 infoM "Hind.invGen.Base" $
                     "Verified candidate:" ++ show candidateFormula ++
                      "(" ++ show k ++ ")"
 
@@ -127,13 +127,13 @@ invGenBaseProcess pool hindFile source sink isDone invChan =
                  loop po invId' (k+1)
 
                else do
-                 infoM "Hind.invGenBase" $
+                 infoM "Hind.invGen.Base" $
                          "Candidate not valid:" ++ show candidateFormula ++
                          "(" ++ show k ++ ")"
 
                  -- Query the countermodel
                  counterModel <- valuation p po (k_time k)
-                 infoM "Hind.invGenBase" $
+                 infoM "Hind.invGen.Base" $
                         "Got Countermodel: " ++ show counterModel
                  pop 1 p
                  case refine counterModel po of
@@ -196,7 +196,7 @@ invGenStepProcess pool hindFile source sink isDone  =
                  | i <- [1..k+1]]
           -- Assert the negated candidate
           let candidateFormula = (formula po (time 0))
-          infoM "Hind.invGenStep" $
+          infoM "Hind.invGen.Step" $
                   "Checking candidate:" ++ show candidateFormula ++
                   "(" ++ show k ++ ")"
 
@@ -205,7 +205,7 @@ invGenStepProcess pool hindFile source sink isDone  =
           valid <- isUnsat p
           if valid
              then do
-               infoM "Hind.invGenStep" $
+               infoM "Hind.invGen.Step" $
                   "Verified candidate" ++ show candidateFormula ++
                   "(" ++ show k ++ ")"
 
@@ -214,7 +214,7 @@ invGenStepProcess pool hindFile source sink isDone  =
                    inv_formula =
                      Term_forall [Sorted_var "n" (Sort_identifier (Identifier "integer"))]
                                  (formula po n_term)
-               noticeM "Hind.invGenStep" $
+               noticeM "Hind.invGen.Step" $
                   "Discovered invariant" ++ show inv_formula ++
                   "(" ++ show k ++ ")"
                pop 2 p
@@ -222,18 +222,18 @@ invGenStepProcess pool hindFile source sink isDone  =
                putMVar isDone po
                loop (Just po) invId'
              else do
-               infoM "Hind.invGenStep" $
+               infoM "Hind.invGen.Step" $
                   "Candidate not valid:" ++ show candidateFormula ++
                   "(" ++ show k ++ ")"
                counterModel <- valuation p po (time 0)
-               infoM "Hind.invGenStep" $
+               infoM "Hind.invGen.Step" $
                         "Got Countermodel: " ++ show counterModel
 
                pop 1 p
                case refine counterModel po of
                  Nothing -> loop Nothing invId'
                  Just po' -> do
-                   infoM "Hind.invGenStep" $
+                   infoM "Hind.invGen.Step" $
                          "Refined " ++ show po ++ " to " ++ show po'
                    refinement po' invId' k
 
