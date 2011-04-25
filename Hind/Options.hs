@@ -44,6 +44,8 @@ data HindOpts =  HindOpts {
   -- Hind Options
   , invGen :: Bool
   , timeout :: Maybe Float -- timeout, expressed in seconds
+  , delayFinish :: Maybe Float -- amount of time to delay, expressed in seconds,
+                               -- used for debugging
 
   } deriving (Show,Data,Typeable)
 
@@ -63,6 +65,9 @@ hindArgs = HindOpts {
        , timeout = Nothing
              &= help "Timeout for model checking"
              &= groupname "Model Checking Options"
+       , delayFinish = Nothing &=
+                       help "Delay finishing model checking for given number of seconds"
+                       &= groupname "Debugging"
        , logLevel = "Hind=NOTICE" &= help "Logging Level (DEBUG,INFO,NOTICE)"
            &= groupname "Logging"
        , logFile = Nothing &= help "Log File"

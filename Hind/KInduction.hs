@@ -69,6 +69,8 @@ parCheck pool opts hindFile = withTimeout $ do
        then noticeM "Hind" (file opts ++ " Passed") >> return Nothing
        else noticeM "Hind" (file opts ++ " Failed") >> return Nothing
 
+
+    maybe (return ()) (\n -> threadDelay (round $ n * 1.0e6)) (delayFinish opts)
     -- Clean up all the threads
     tids <- readMVar children
     mapM_ killThread tids
