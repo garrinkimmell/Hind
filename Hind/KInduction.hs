@@ -15,9 +15,10 @@ import Control.Monad
 
 import Control.Concurrent
   (ThreadId,forkIO,killThread,threadDelay,newMVar, modifyMVar_,readMVar,
-   newEmptyMVar, putMVar, takeMVar)
+   newEmptyMVar, putMVar, takeMVar,swapMVar)
 import Data.List(sortBy, groupBy)
 import System.Log.Logger
+import qualified System.Timeout as TO
 
 
 parCheck :: ConnectionPool -> HindOpts -> HindFile -> IO Bool
@@ -55,26 +56,31 @@ parCheck pool opts hindFile = withTimeout $ do
       modifyMVar_ children (\tids -> return $ tids ++ [invGenBase,invGenStep])
 
 
+
+
     let loop basePass = do
           res <- readChan resultChan
-          -- putStrLn $ show res
           case res of
             BasePass k -> loop k
             BaseFail k -> return False
             StepPass k -> return True
             StepFail k -> loop basePass
 
-    result <- loop 1
-    if result
-       then noticeM "Hind" (file opts ++ " Passed") >> return Nothing
-       else noticeM "Hind" (file opts ++ " Failed") >> return Nothing
+    let cleanup = do
+          tids <- readMVar children
+          debugM "Hind" "Killing threads in cleanup"
+          mapM_ killThread tids
+
+    -- If your timeout is so short that you can't even get to this point, then
+    -- you're pretty screwed. Sorry.
+    flip finally cleanup $ do
+       result <- loop 1
+       if result
+         then noticeM "Hind" (file opts ++ " Passed")
+         else noticeM "Hind" (file opts ++ " Failed")
+       return result
 
 
-    maybe (return ()) (\n -> threadDelay (round $ n * 1.0e6)) (delayFinish opts)
-    -- Clean up all the threads
-    tids <- readMVar children
-    mapM_ killThread tids
-    return result
   where withTimeout m
           | Nothing <- timeout opts = m
           | Just secs <- timeout opts = do
@@ -85,6 +91,7 @@ parCheck pool opts hindFile = withTimeout $ do
                                threadDelay (round (secs * 1000000.0))
                                putMVar result Nothing
              r <- takeMVar result
+             debugM "Hind" "Killing threads in timeout"
              mapM_ killThread [workerTid,timeoutTid]
              case r of
                Just val -> return val

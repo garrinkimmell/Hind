@@ -3,6 +3,9 @@ module Hind.Chan(
    Chan, readChan, writeChan,newChan,isEmptyChan,writeList2Chan, dupChan
   ) where
 
+-- import Control.Concurrent.Chan
+
+
 import qualified Control.Concurrent.STM.TChan as C
 import Control.Concurrent.STM
 import Control.Applicative
@@ -17,10 +20,10 @@ writeChan c v = atomically $ C.writeTChan c v
 isEmptyChan c = atomically $  C.isEmptyTChan c
 dupChan c = atomically $ C.dupTChan c
 writeList2Chan c l = mapM_ (writeChan c) l
-tryReadChan c = do
-  t <- isEmptyChan c
+tryReadChan c = atomically $ do
+  t <- C.isEmptyTChan c
   if t
      then return Nothing
-     else Just <$> readChan c
+     else Just <$> C.readTChan c
 
 
