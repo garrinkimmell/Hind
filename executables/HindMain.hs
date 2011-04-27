@@ -52,10 +52,11 @@ time a = do
 main = do
   options <- getOptions
   setupLogger (getLogFile options)  options
-  debugM "Hind" $ "Using smt command " ++ (getSMTCmd options)
-  pool <- newConnectionPool (getSMTCmd options) 5
+  let cmd = (getSMTCmd options)
+  debugM "Hind" $ "Using smt command " ++ cmd
+  -- pool <- newConnectionPool (getSMTCmd options) 5
   files <- getFiles options
-  mapM_ (checkFile pool) files
+  mapM_ (newConnectionPool cmd 5 >>= checkFile) files
 
 
 checkFile :: ConnectionPool -> HindOpts -> IO Bool
