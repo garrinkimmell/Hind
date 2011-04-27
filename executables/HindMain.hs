@@ -63,7 +63,7 @@ checkFile :: ConnectionPool -> HindOpts -> IO Bool
 checkFile pool_ options = handle handler $ do
     noticeM "Hind" ("Checking file " ++ (file options))
     parsed <- hindFile (file options)
-    pool <- newConnectionPool (getSMTCmd options) 5
+    -- pool <- newConnectionPool (getSMTCmd options) 5
     time $ parCheck pool options parsed
   where handler :: SomeException -> IO Bool
         handler e = do
