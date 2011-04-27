@@ -61,7 +61,7 @@ makeProverNamed cmd nm = do
         case res of
           -- FIXME: Shouldn't really ignore all errors, just those satisfying
           -- isEOF.
-          Left err -> reader rest
+          Left (SomeException err) -> reader rest
           Right cnts -> do
                 let (res,rem) = {-# SCC "parser" #-}
                       runParser SMT.responses $ rest ++ (lexSMTLIB cnts)
