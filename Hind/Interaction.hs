@@ -35,9 +35,11 @@ makeProverNamed cmd nm = do
   (pipe_in,pipe_out,pipe_err,ph) <-
     {-# SCC "runInteractiveCommand" #-} runInteractiveCommand cmd
   hSetBinaryMode pipe_in False
-
   hSetBinaryMode pipe_out False
   hSetBinaryMode pipe_err False
+  hSetBuffering pipe_in NoBuffering
+  hSetBuffering pipe_out NoBuffering
+  hSetBuffering pipe_err NoBuffering
 
   -- Create input/output channels
   reqChannel <- {-# SCC "newChanReq" #-} newChan
@@ -100,7 +102,7 @@ checkSat prover = do
   res <- sendCommand prover Check_sat
   case res of
     (Cs_response status) -> return status
-    _ -> fail $ "checkSat: " ++ show res
+    _ -> errorM (name prover) $ "checkSat: " ++ show res
 
 
 isSat, isUnsat :: Prover -> IO Bool
