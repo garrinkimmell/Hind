@@ -54,15 +54,16 @@ main = do
   setupLogger (getLogFile options)  options
   let cmd = (getSMTCmd options)
   debugM "Hind" $ "Using smt command " ++ cmd
-  -- pool <- newConnectionPool (getSMTCmd options) 5
+  pool <- newConnectionPool (getSMTCmd options) 5
   files <- getFiles options
-  mapM_ (newConnectionPool cmd 5 >>= checkFile) files
+  mapM_ (checkFile pool) files
 
 
 checkFile :: ConnectionPool -> HindOpts -> IO Bool
-checkFile pool options = handle handler $ do
+checkFile pool_ options = handle handler $ do
     noticeM "Hind" ("Checking file " ++ (file options))
     parsed <- hindFile (file options)
+    pool <- newConnectionPool (getSMTCmd options) 5
     time $ parCheck pool options parsed
   where handler :: SomeException -> IO Bool
         handler e = do
