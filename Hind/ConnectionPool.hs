@@ -3,6 +3,7 @@ module Hind.ConnectionPool
 
 import Hind.Interaction
 import Hind.Options
+import Hind.Logging
 
 import Language.SMTLIB(Command(..))
 import Control.Concurrent
@@ -20,12 +21,14 @@ newConnectionPool proverCmd num = do
 
 withProver :: ConnectionPool -> String -> (Prover -> IO ()) -> IO ThreadId
 withProver pool name comp = do
+
    prover <- getProver pool name
    forkIO $ comp prover >> return () `finally` releaseProver pool prover
 
 
 getProver :: ConnectionPool -> String -> IO Prover
 getProver (ConnectionPool proverCmd pool) name = do
+  debugM name "Aquiring prover."
   provers <- takeMVar pool
   case provers of
     [] ->  makeProverNamed proverCmd name
@@ -36,6 +39,7 @@ getProver (ConnectionPool proverCmd pool) name = do
 
 releaseProver :: ConnectionPool -> Prover -> IO ()
 releaseProver (ConnectionPool proverCmd pool) prover = do
+  debugM (name prover) "Releasing prover."
   let prover' = prover { name = "Hind.pool" }
   -- This is intended to do a reset. There doesn't seem to be a 'reset' command,
   -- so we are assuming that the stack is cleaned up by whatever uses the
