@@ -59,9 +59,9 @@ makeProverNamed cmd nm = do
   let reader rest = {-# SCC "reader" #-} do
         res <- try (hGetLine pipe_out)
         case res of
-          Left (SomeException err) -> do
-                errorM "Hind.reader" $ "Got Error" ++ show err
-                reader rest
+          -- FIXME: Shouldn't really ignore all errors, just those satisfying
+          -- isEOF.
+          Left err -> reader rest
           Right cnts -> do
                 let (res,rem) = {-# SCC "parser" #-}
                       runParser SMT.responses $ rest ++ (lexSMTLIB cnts)
