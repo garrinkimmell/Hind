@@ -32,7 +32,8 @@ data Prover = Prover { requests :: Chan Command
 makeProverNamed :: String -> String -> IO Prover
 makeProverNamed cmd nm = do
 
-  (pipe_in,pipe_out,pipe_err,ph) <-   {-# SCC "runInteractiveCommand" #-} runInteractiveCommand cmd
+  (pipe_in,pipe_out,pipe_err,ph) <-
+    {-# SCC "runInteractiveCommand" #-} runInteractiveCommand cmd
   hSetBinaryMode pipe_in False
 
   hSetBinaryMode pipe_out False
@@ -56,15 +57,19 @@ makeProverNamed cmd nm = do
              writer
 
   let reader rest = {-# SCC "reader" #-} do
-        cnts <- hGetLine pipe_out
-        -- putStrLn $ nm ++ " got a line " ++ cnts
-        let (res,rem) = {-# SCC "parser" #-} runParser SMT.responses $ rest ++ (lexSMTLIB cnts)
+        res <- try (hGetLine pipe_out)
         case res of
-          Left err -> do
-            return ()
-          Right val -> do
-            mapM_ (writeChan rspChannel) val
-        reader rem
+          Left (SomeException err) -> do
+                errorM "Hind.reader" $ "Got Error" ++ show err
+                reader rest
+          Right cnts -> do
+                let (res,rem) = {-# SCC "parser" #-}
+                      runParser SMT.responses $ rest ++ (lexSMTLIB cnts)
+                case res of
+                  Left err -> do return ()
+                  Right val -> do
+                           mapM_ (writeChan rspChannel) val
+                reader rem
 
   readerThd <-   {-# SCC "forkReader" #-}
     forkIO $ bracket_ (return ())
