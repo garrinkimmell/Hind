@@ -8,7 +8,7 @@ module Hind.Interaction
    getModel
    ) where
 
-import Language.SMTLIB hiding (responses)
+import Language.SMTLIB
 import qualified Language.SMTLIB as SMT
 import System.Process
 import System.IO
@@ -56,25 +56,13 @@ makeProverNamed cmd nm = do
              (hClose pipe_in)
              writer
 
-  let reader rest = {-# SCC "reader" #-} do
-        res <- try (hGetLine pipe_out)
-        case res of
-          -- FIXME: Shouldn't really ignore all errors, just those satisfying
-          -- isEOF.
-          Left (SomeException err) -> reader rest
-          Right cnts -> do
-                let (res,rem) = {-# SCC "parser" #-}
-                      runParser SMT.responses $ rest ++ (lexSMTLIB cnts)
-                case res of
-                  Left err -> do return ()
-                  Right val -> do
-                           mapM_ (writeChan rspChannel) val
-                reader rem
+  let reader = {-# SCC "reader" #-} do
+        SMT.commandResponseSource pipe_out (\cmd -> writeChan rspChannel cmd)
 
   readerThd <-   {-# SCC "forkReader" #-}
     forkIO $ bracket_ (return ())
              (hClose pipe_out)
-             (reader [])
+             reader
 
   depth <- newMVar 0
   return $ Prover reqChannel rspChannel [readerThd,writerThd] ph nm depth

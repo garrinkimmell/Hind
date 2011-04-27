@@ -1,7 +1,7 @@
 {-# LANGUAGE TransformListComp, StandaloneDeriving, FlexibleContexts, TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses #-}
 module Hind.Parser where
 
-import Text.ParserCombinators.Poly
+-- import Text.ParserCombinators.Poly
 import Language.SMTLIB
 import Data.List(find)
 import Data.Maybe
@@ -18,22 +18,13 @@ data HindFile = HindFile { hindProperties :: [Identifier]
                          } deriving Show
 
 hindFile f = do
-  str <- readFile f
-  case runParser' hind (lexSMTLIB str) >>= processScript of
+  scr <- parseScriptFile f
+  case scr >>= processScript of
     (Left err) -> do
                fail err
     (Right res) -> do
                return res
 
-hind :: Parser Token  Script
-hind = script
-
-
-runParser' p inp = case runParser p inp of
-                    (Left err, _) -> throwError err
-                    (Right res,[]) -> return res
-                    (Right _,_) ->
-                      throwError "Parse Error: Didn't consume all input"
 
 deriving instance Eq Identifier
 deriving instance Ord Identifier
