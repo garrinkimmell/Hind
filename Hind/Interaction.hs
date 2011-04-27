@@ -97,19 +97,22 @@ sendScript prover (Script cmds) = mapM (sendCommand prover) cmds
 
 
 -- | Check satisfiability
-checkSat :: Prover -> IO Status
+checkSat :: Prover -> IO (Maybe Status)
 checkSat prover = do
   res <- sendCommand prover Check_sat
   case res of
-    (Cs_response status) -> return status
-    _ -> errorM (name prover) $ "checkSat: " ++ show res
+    (Cs_response status) -> return (Just status)
+    _ -> do errorM (name prover) $ "checkSat: " ++ show res
+            return Nothing
 
 
 isSat, isUnsat :: Prover -> IO Bool
-isSat = fmap sat . checkSat
+isSat p = do status <- checkSat p
+             return $ maybe False sat status
   where sat Sat = True
         sat _ = False
-isUnsat = fmap unsat . checkSat
+isUnsat p = do status <- checkSat p
+               return $ maybe False unsat status
   where unsat Unsat = True
         unsat _ = False
 
