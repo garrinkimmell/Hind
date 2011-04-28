@@ -105,7 +105,7 @@ checkSat prover = do
   res <- sendCommand prover Check_sat
   case res of
     (Cs_response status) -> return (Just status)
-    _ -> do errorM (name prover) $ "checkSat: " ++ show res
+    _ -> do -- errorM (name prover) $ "checkSat: " ++ show res
             return Nothing
 
 
