@@ -39,9 +39,9 @@ makeProverNamed cmd nm = do
   hSetBinaryMode pipe_in False
   hSetBinaryMode pipe_out False
   hSetBinaryMode pipe_err False
-  hSetBuffering pipe_in NoBuffering
-  hSetBuffering pipe_out NoBuffering
-  hSetBuffering pipe_err NoBuffering
+  -- hSetBuffering pipe_in NoBuffering
+  -- hSetBuffering pipe_out NoBuffering
+  -- hSetBuffering pipe_err NoBuffering
 
   -- Create input/output channels
   reqChannel <- {-# SCC "newChanReq" #-} newChan
@@ -52,6 +52,7 @@ makeProverNamed cmd nm = do
   let writer = do
           cmdReq <- readChan reqChannel
           hPutStrLn pipe_in (show cmdReq)
+          hPutStrLn pipe_in ";req"
           hFlush pipe_in
           writer
 
