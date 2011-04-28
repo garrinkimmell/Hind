@@ -90,8 +90,22 @@ sendCommand prover cmd = mask_ $ do
   debugM ((name prover) ++ ".interaction") ("req:" ++ show cmd)
   writeChan (requests prover) cmd
   rsp <- readChan (responses prover)
-  debugM ((name prover) ++ ".interaction") ("rsp:" ++ show rsp)
-  return rsp
+  rsp' <- reportErrors prover rsp
+  debugM ((name prover) ++ ".interaction") ("rsp:" ++ show rsp')
+  return rsp'
+
+reportErrors p rsp@(Gen_response (Error str)) = do
+  mapM_ (errorM (name p ++ ".interaction")) (lines str)
+  empty <- isEmptyChan (responses p)
+  if empty
+     then return rsp
+     else do
+       rsp' <- readChan (responses p)
+       reportErrors p rsp'
+
+reportErrors p rsp = return rsp
+
+
 
 
 sendScript :: Prover -> Script -> IO [Command_response]
