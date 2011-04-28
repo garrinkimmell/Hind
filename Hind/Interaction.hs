@@ -135,18 +135,35 @@ pop i p = do
 
 reset p = do
    rsp <- sendCommand p (Get_info Name)
-   case rsp of
-     Info_response (Info_response_name _) -> debugM (name p) "Channel is drained"
-     _ -> drainChan
+   if isNameInfo rsp
+      then debugM (name p) "Drained channel"
+      else drainChan
+   -- case rsp of
+   --   Gen_response r ->  debugM (name p) $ "Gen_response" ++ show r
+   --   Info_response r -> debugM (name p) $ "Channel is drained"
+   --   Cs_response r -> debugM (name p) $ "Cs_response" ++ show r
+   --   Gi_response r -> debugM (name p) $ "Gi_response" ++ show r
+   --   Gv_response r -> debugM (name p) $ "Gv_response" ++ show r
+   --   Gta_response r -> debugM (name p) $ "Gta_response" ++ show r
+   --   Gp_response r -> debugM (name p) $ "Gp_response" ++ show r
+   --   Gv_response r -> debugM (name p) $ "Gv_response" ++ show r
+   --   _ -> debugM (name p) "Didn't drain channel" -- drainChan
    cur <- readMVar (depth p)
    when (cur > 0) $ pop cur p >> return ()
    return ()
    where drainChan = do
                  rsp <- readChan (responses p)
-                 case rsp of
-                   Info_response (Info_response_name _) ->
-                      debugM (name p) "Channel is drained"
-                   _ -> drainChan
+                 if isNameInfo rsp
+                    then debugM (name p) "Drained channel"
+                    else drainChan
+         -- Z3 doesn't reply correctly
+         isNameInfo
+           (Gp_response
+            (S_exprs
+             [S_exprs [S_expr_constant (Spec_constant_string "name"),
+                       S_expr_constant (Spec_constant_string "Z3")]])) =
+           True
+         isNameInfo _ = False
 
 
 -- | Get the current model

@@ -26,18 +26,17 @@ closePool (ConnectionPool _ pool) = do
   provers <- takeMVar pool
   mapM_ closeProver provers
 
-withProver :: ConnectionPool -> String -> (Prover -> IO ()) -> IO ThreadId
+withProver :: ConnectionPool -> String -> (Prover -> IO ()) -> IO (ThreadId, IO ())
 withProver pool name comp = do
-   mask $ \restore -> do
      prover <- getProver pool name
+     tid <- forkIO $ (comp prover)
      let release = releaseProver pool prover
-     forkIO $ (restore (comp prover))
-              `onException` (putStrLn "exception" >> release)
+     return (tid,release)
 
 
 getProver :: ConnectionPool -> String -> IO Prover
 getProver (ConnectionPool proverCmd pool) name = do
-  infoM name "Aquiring prover."
+  infoM name "Acquiring prover."
   provers <- takeMVar pool
   case provers of
     [] ->  do debugM name "Creating new prover."
@@ -55,20 +54,7 @@ releaseProver :: ConnectionPool -> Prover -> IO ()
 releaseProver (ConnectionPool proverCmd pool) prover = do
   infoM (name prover) "Releasing prover."
   reset prover
-  -- Drain the response channel
-  drainChan (responses prover)
-  isEmpty <- isEmptyChan (responses prover)
-  unless isEmpty $ do
-    infoM (name prover) "Response channel is not empty!"
-
   let prover' = prover { name = "Hind.pool" }
-  -- This is intended to do a reset. There doesn't seem to be a 'reset' command,
-  -- so we are assuming that the stack is cleaned up by whatever uses the
-  -- prover. This isn't safe, and we really should either keep the stack size in
-  -- the Prover (TODO) or else figure out how to get the stack depth.
   ps <- takeMVar pool
   putMVar pool (prover':ps)
   return ()
-  where drainChan c = do empty <- isEmptyChan c
-                         unless empty $ readChan c >> drainChan c
-

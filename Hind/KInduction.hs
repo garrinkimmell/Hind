@@ -69,7 +69,12 @@ parCheck pool opts hindFile = withTimeout $ do
     let cleanup = do
           tids <- readMVar children
           infoM "Hind" "Killing threads in cleanup"
-          mapM_ (\(n,tid) -> putStrLn n >> killThread tid) tids
+          forM_  tids (\(n,(tid,final)) -> do
+                   debugM "Hind" $ "Closing " ++ n
+                   killThread tid
+                   final)
+
+
 
     -- If your timeout is so short that you can't even get to this point, then
     -- you're pretty screwed. Sorry.
@@ -107,7 +112,7 @@ data ProverResult = BasePass Integer | BaseFail Integer | StepPass Integer | Ste
 
 -- baseProcess proverCmd model property resultChan invChan = forkIO $
 baseProcess
-  :: ConnectionPool -> HindFile -> Chan ProverResult -> Chan POVal -> IO ThreadId
+  :: ConnectionPool -> HindFile -> Chan ProverResult -> Chan POVal -> IO (ThreadId, IO ())
 baseProcess pool hindFile resultChan invChan =
   withProver pool "Hind.baseProcess" $  \p -> do
     -- infoM "Hind.baseProcess" "Base Prover Started"
@@ -142,7 +147,8 @@ baseProcess pool hindFile resultChan invChan =
         [property] = hindProperties hindFile
         transition = hindTransition hindFile
 
-stepProcess :: ConnectionPool -> HindFile -> Chan ProverResult -> Chan POVal -> IO ThreadId
+stepProcess ::
+  ConnectionPool -> HindFile -> Chan ProverResult -> Chan POVal -> IO (ThreadId,IO ())
 stepProcess pool hindFile resultChan invChan =
   withProver pool "Hind.stepProcess" $  \p -> do
     -- infoM "Hind.stepProcess" "Step Prover Started"
@@ -175,10 +181,6 @@ stepProcess pool hindFile resultChan invChan =
           if res
                then do
                  writeChan resultChan (StepPass k)
-                 -- It would make sense to just return here, but that doesn't
-                 -- seem to play well with the cleanup code. The thread will
-                 -- be killed right this anyway, so it really shouldn't matter.
-                 loop (k+1) invId'
                else do
                  writeChan resultChan (StepFail k)
                  loop (k+1) invId'

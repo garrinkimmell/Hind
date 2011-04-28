@@ -57,7 +57,7 @@ invGenBaseProcess ::
   Chan (Integer, POVal) ->  -- ^ Sink to step case
   MVar POVal ->  -- ^ Feedback from step case
   Chan POVal -> -- ^ A source for invariants
-  IO ThreadId
+  IO (ThreadId, IO ())
 invGenBaseProcess pool hindFile source sink isDone invChan =
   {-# SCC "invGenBaseProcess" #-}
   withProver pool "Hind.invGen.Base" $ \p -> do
@@ -153,7 +153,7 @@ invGenBaseProcess pool hindFile source sink isDone invChan =
 -- has generated)
 invGenStepProcess ::
   ConnectionPool -> HindFile ->
-  Chan (Integer,POVal) -> Chan POVal -> MVar POVal -> IO ThreadId
+  Chan (Integer,POVal) -> Chan POVal -> MVar POVal -> IO (ThreadId, IO ())
 invGenStepProcess pool hindFile source sink isDone  =
   {-# SCC "invGenStepProcess" #-}
   withProver pool "Hind.invStep" $ \p -> do
