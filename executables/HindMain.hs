@@ -5,7 +5,7 @@ import Hind(
        hindFile, -- parser
        setupLogger, getLogFile, logLevel, -- logging
        parCheck, -- K-induction
-       ConnectionPool, newConnectionPool
+       ConnectionPool, newConnectionPool, closePool
        )
 -- import Hind.KInduction
 -- import Hind.Parser
@@ -26,7 +26,7 @@ import System.Log.Handler.Simple
 import System.Log.Formatter
 import System.IO
 import System.Directory(doesDirectoryExist,getDirectoryContents)
-import System.FilePath(takeExtension)
+import System.FilePath(takeExtension, (</>))
 
 import Control.Concurrent(forkIO)
 
@@ -64,7 +64,9 @@ checkFile pool options = handle handler $ do
     noticeM "Hind" ("Checking file " ++ (file options))
     parsed <- hindFile (file options)
     -- pool <- newConnectionPool (getSMTCmd options) 5
-    time $ parCheck pool options parsed
+    res <- time $ parCheck pool options parsed
+    -- closePool pool
+    return res
   where handler :: SomeException -> IO Bool
         handler e = do
           noticeM "Hind" $
@@ -78,7 +80,7 @@ getFiles opts = do
     then do
       infoM "Hind" $ printf "Checking directory %s" (file opts)
       contents <- getDirectoryContents (file opts)
-      return [opts { file = f } | f <- contents, takeExtension f == ".smt2"]
+      return [opts { file = file opts </> f } | f <- contents, takeExtension f == ".smt2"]
     else return [opts]
 
 

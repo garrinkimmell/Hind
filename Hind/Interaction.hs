@@ -1,18 +1,20 @@
 {-# LANGUAGE ScopedTypeVariables, StandaloneDeriving #-}
 module Hind.Interaction
   (Prover,
-   makeProver, makeProverNamed, closeProver,name,
+   makeProver, makeProverNamed, closeProver,name,responses,
    sendCommand, sendScript,
    checkSat,isSat,isUnsat,
    push,pop,reset,
-   getModel
+   getModel,
    ) where
+
+import Hind.Chan
 
 import Language.SMTLIB
 import qualified Language.SMTLIB as SMT
 import System.Process
 import System.IO
-import Control.Concurrent
+import Control.Concurrent hiding (Chan,readChan,writeChan,newChan,isEmptyChan)
 import Control.Exception
 import Control.Monad
 import Text.ParserCombinators.Poly
@@ -48,10 +50,10 @@ makeProverNamed cmd nm = do
 
   -- Fork off processes for interaction
   let writer = do
-        cmdReq <- readChan reqChannel
-        hPutStrLn pipe_in (show cmdReq)
-        hFlush pipe_in
-        writer
+          cmdReq <- readChan reqChannel
+          hPutStrLn pipe_in (show cmdReq)
+          hFlush pipe_in
+          writer
 
   writerThd <-   {-# SCC "forkWriter" #-}
     forkIO $ bracket_ (return ())
@@ -83,7 +85,7 @@ closeProver prover = do
   terminateProcess (pid prover)
 
 sendCommand :: Prover -> Command -> IO Command_response
-sendCommand prover cmd = do
+sendCommand prover cmd = mask_ $ do
   debugM ((name prover) ++ ".interaction") ("req:" ++ show cmd)
   writeChan (requests prover) cmd
   rsp <- readChan (responses prover)
@@ -132,9 +134,19 @@ pop i p = do
     sendCommand p (Pop i)
 
 reset p = do
+   rsp <- sendCommand p (Get_info Name)
+   case rsp of
+     Info_response (Info_response_name _) -> debugM (name p) "Channel is drained"
+     _ -> drainChan
    cur <- readMVar (depth p)
-   pop cur p
-
+   when (cur > 0) $ pop cur p >> return ()
+   return ()
+   where drainChan = do
+                 rsp <- readChan (responses p)
+                 case rsp of
+                   Info_response (Info_response_name _) ->
+                      debugM (name p) "Channel is drained"
+                   _ -> drainChan
 
 
 -- | Get the current model

@@ -24,7 +24,6 @@ import qualified System.Timeout as TO
 parCheck :: ConnectionPool -> HindOpts -> HindFile -> IO Bool
 parCheck pool opts hindFile = withTimeout $ do
 
-
     -- Add in path compression and step vars.
     let hindFile' = addStepVars $ addPathCompression hindFile
 
@@ -46,14 +45,15 @@ parCheck pool opts hindFile = withTimeout $ do
     -- First start the main proof process
     baseProc <- baseProcess pool hindFile' resultChan invChanBase
     stepProc <- stepProcess pool hindFile' resultChan invChanStep
-    modifyMVar_ children (\tids -> return $ tids ++ [baseProc,stepProc])
+    modifyMVar_ children (\tids -> return $ tids ++ [("base",baseProc),("step",stepProc)])
 
 
 
     when (Opts.invGen opts) $ do
       -- Now kick off the invariant generation process
       (invGenBase,invGenStep) <- invGenProcess pool hindFile' invChan
-      modifyMVar_ children (\tids -> return $ tids ++ [invGenBase,invGenStep])
+      modifyMVar_ children
+         (\tids -> return $ tids ++ [("invGenBase",invGenBase),("invGenStep",invGenStep)])
 
 
 
@@ -68,8 +68,8 @@ parCheck pool opts hindFile = withTimeout $ do
 
     let cleanup = do
           tids <- readMVar children
-          debugM "Hind" "Killing threads in cleanup"
-          mapM_ killThread tids
+          infoM "Hind" "Killing threads in cleanup"
+          mapM_ (\(n,tid) -> putStrLn n >> killThread tid) tids
 
     -- If your timeout is so short that you can't even get to this point, then
     -- you're pretty screwed. Sorry.
@@ -110,7 +110,7 @@ baseProcess
   :: ConnectionPool -> HindFile -> Chan ProverResult -> Chan POVal -> IO ThreadId
 baseProcess pool hindFile resultChan invChan =
   withProver pool "Hind.baseProcess" $  \p -> do
-    infoM "Hind.baseProcess" "Base Prover Started"
+    -- infoM "Hind.baseProcess" "Base Prover Started"
     _ <- mapM (sendCommand p) model
     infoM "Hind.baseProcess" "System Defined"
     let loop k invId = do
@@ -145,7 +145,7 @@ baseProcess pool hindFile resultChan invChan =
 stepProcess :: ConnectionPool -> HindFile -> Chan ProverResult -> Chan POVal -> IO ThreadId
 stepProcess pool hindFile resultChan invChan =
   withProver pool "Hind.stepProcess" $  \p -> do
-    infoM "Hind.stepProcess" "Step Prover Started"
+    -- infoM "Hind.stepProcess" "Step Prover Started"
     _ <- mapM (sendCommand p) model
     infoM "Hind.stepProcess" "System Defined"
 
@@ -175,6 +175,10 @@ stepProcess pool hindFile resultChan invChan =
           if res
                then do
                  writeChan resultChan (StepPass k)
+                 -- It would make sense to just return here, but that doesn't
+                 -- seem to play well with the cleanup code. The thread will
+                 -- be killed right this anyway, so it really shouldn't matter.
+                 loop (k+1) invId'
                else do
                  writeChan resultChan (StepFail k)
                  loop (k+1) invId'

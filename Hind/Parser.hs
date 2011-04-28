@@ -1,7 +1,6 @@
 {-# LANGUAGE TransformListComp, StandaloneDeriving, FlexibleContexts, TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses #-}
 module Hind.Parser where
 
--- import Text.ParserCombinators.Poly
 import Language.SMTLIB
 import Data.List(find)
 import Data.Maybe

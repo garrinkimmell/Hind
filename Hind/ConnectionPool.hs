@@ -1,13 +1,15 @@
 module Hind.ConnectionPool
-  (ConnectionPool, newConnectionPool, withProver) where
+  (ConnectionPool, newConnectionPool, closePool, withProver) where
 
 import Hind.Interaction
 import Hind.Options
 import Hind.Logging
+import Hind.Chan
 
 import Language.SMTLIB(Command(..))
-import Control.Concurrent
-import Control.Exception(finally)
+import Control.Concurrent hiding (isEmptyChan,readChan)
+import Control.Exception(finally,mask,onException,mask_)
+import Control.Monad(unless)
 
 data ConnectionPool = ConnectionPool String (MVar [Prover])
 
@@ -19,35 +21,54 @@ newConnectionPool proverCmd num = do
   putMVar mv provers
   return (ConnectionPool proverCmd mv)
 
+closePool :: ConnectionPool -> IO ()
+closePool (ConnectionPool _ pool) = do
+  provers <- takeMVar pool
+  mapM_ closeProver provers
+
 withProver :: ConnectionPool -> String -> (Prover -> IO ()) -> IO ThreadId
 withProver pool name comp = do
-
-   prover <- getProver pool name
-   forkIO $ comp prover >> return () `finally` releaseProver pool prover
+   mask $ \restore -> do
+     prover <- getProver pool name
+     let release = releaseProver pool prover
+     forkIO $ (restore (comp prover))
+              `onException` (putStrLn "exception" >> release)
 
 
 getProver :: ConnectionPool -> String -> IO Prover
 getProver (ConnectionPool proverCmd pool) name = do
-  debugM name "Aquiring prover."
+  infoM name "Aquiring prover."
   provers <- takeMVar pool
   case provers of
-    [] ->  makeProverNamed proverCmd name
+    [] ->  do debugM name "Creating new prover."
+              p <- makeProverNamed proverCmd name
+              putMVar pool [p]
+              push 1 p
+              return (p { name = name})
     (p:ps) -> do
       putMVar pool ps
-      push 1 p
-      return (p {name=name})
+      let p' = p {name=name}
+      push 1 p'
+      return p'
 
 releaseProver :: ConnectionPool -> Prover -> IO ()
 releaseProver (ConnectionPool proverCmd pool) prover = do
-  debugM (name prover) "Releasing prover."
+  infoM (name prover) "Releasing prover."
+  reset prover
+  -- Drain the response channel
+  drainChan (responses prover)
+  isEmpty <- isEmptyChan (responses prover)
+  unless isEmpty $ do
+    infoM (name prover) "Response channel is not empty!"
+
   let prover' = prover { name = "Hind.pool" }
   -- This is intended to do a reset. There doesn't seem to be a 'reset' command,
   -- so we are assuming that the stack is cleaned up by whatever uses the
   -- prover. This isn't safe, and we really should either keep the stack size in
   -- the Prover (TODO) or else figure out how to get the stack depth.
-  reset prover'
   ps <- takeMVar pool
   putMVar pool (prover':ps)
   return ()
-
+  where drainChan c = do empty <- isEmptyChan c
+                         unless empty $ readChan c >> drainChan c
 
