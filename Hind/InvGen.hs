@@ -22,7 +22,7 @@ import System.Log.Logger
 
 -- Invariant Generation
 -- invGenProcess proverCmd model property initPO invChan = forkIO $ do
-invGenProcess pool hindFile invChan = do
+invGenProcess pool hindFile invChan onError = do
   candidatesChan <- newChan
   basePassed <- newChan
   candidateDone <- newEmptyMVar
@@ -34,10 +34,10 @@ invGenProcess pool hindFile invChan = do
 
   baseProc <-
     invGenBaseProcess pool hindFile candidatesChan
-                      basePassed candidateDone baseProcInv
+                      basePassed candidateDone baseProcInv onError
 
   stepProc <-
-    invGenStepProcess pool hindFile basePassed stepProcInv candidateDone
+    invGenStepProcess pool hindFile basePassed stepProcInv candidateDone onError
   writeList2Chan candidatesChan candidates
   return (baseProc,stepProc)
   where candidates =
@@ -57,10 +57,11 @@ invGenBaseProcess ::
   Chan (Integer, POVal) ->  -- ^ Sink to step case
   MVar POVal ->  -- ^ Feedback from step case
   Chan POVal -> -- ^ A source for invariants
+  (ProverException -> IO ()) ->  -- ^ What to do on prover errors
   IO (ThreadId, IO ())
-invGenBaseProcess pool hindFile source sink isDone invChan =
+invGenBaseProcess pool hindFile source sink isDone invChan onError =
   {-# SCC "invGenBaseProcess" #-}
-  withProver pool "Hind.invGen.Base" $ \p -> do
+  withProverException pool "Hind.invGen.Base" onError $ \p -> do
 
     -- Initialize the prover with the transition system
     mapM_ (sendCommand p) transitionSystem
@@ -153,10 +154,12 @@ invGenBaseProcess pool hindFile source sink isDone invChan =
 -- has generated)
 invGenStepProcess ::
   ConnectionPool -> HindFile ->
-  Chan (Integer,POVal) -> Chan POVal -> MVar POVal -> IO (ThreadId, IO ())
-invGenStepProcess pool hindFile source sink isDone  =
+  Chan (Integer,POVal) -> Chan POVal -> MVar POVal ->
+  (ProverException -> IO ()) ->  -- ^ What to do on prover errors
+  IO (ThreadId, IO ())
+invGenStepProcess pool hindFile source sink isDone onError  =
   {-# SCC "invGenStepProcess" #-}
-  withProver pool "Hind.invStep" $ \p -> do
+  withProverException pool "Hind.invStep" onError $ \p -> do
     -- Initialize the prover with the transition system
     mapM_ (sendCommand p) transitionSystem
 

@@ -4,7 +4,7 @@ import Hind(
        HindOpts,getOptions,file, getSMTCmd, -- options
        hindFile, -- parser
        setupLogger, getLogFile, logLevel, -- logging
-       parCheck, -- K-induction
+       parCheck,Result, -- K-induction
        ConnectionPool, newConnectionPool, closePool
        )
 -- import Hind.KInduction
@@ -59,19 +59,19 @@ main = do
   mapM_ (checkFile pool) files
 
 
-checkFile :: ConnectionPool -> HindOpts -> IO Bool
+checkFile :: ConnectionPool -> HindOpts -> IO (Maybe Result)
 checkFile pool options = handle handler $ do
     noticeM "Hind" ("Checking file " ++ (file options))
     parsed <- hindFile (file options)
     -- pool <- newConnectionPool (getSMTCmd options) 5
     res <- time $ parCheck pool options parsed
     -- closePool pool
-    return res
-  where handler :: SomeException -> IO Bool
+    return (Just res)
+  where handler :: SomeException -> IO (Maybe Result)
         handler e = do
           noticeM "Hind" $
             printf "%s failed with error:%s\n" (file options) (show e)
-          return False
+          return Nothing
 
 getFiles :: HindOpts -> IO [HindOpts]
 getFiles opts = do

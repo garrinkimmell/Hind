@@ -1,5 +1,5 @@
 module Hind.ConnectionPool
-  (ConnectionPool, newConnectionPool, closePool, withProver) where
+  (ConnectionPool, newConnectionPool, closePool, withProver, withProverException) where
 
 import Hind.Interaction
 import Hind.Options
@@ -8,8 +8,10 @@ import Hind.Chan
 
 import Language.SMTLIB(Command(..))
 import Control.Concurrent hiding (isEmptyChan,readChan)
-import Control.Exception(finally,mask,onException,mask_)
+import Control.Exception(finally,mask,throw,catch,onException,mask_)
 import Control.Monad(unless)
+import Prelude hiding (catch)
+
 
 data ConnectionPool = ConnectionPool String (MVar [Prover])
 
@@ -27,9 +29,18 @@ closePool (ConnectionPool _ pool) = do
   mapM_ closeProver provers
 
 withProver :: ConnectionPool -> String -> (Prover -> IO ()) -> IO (ThreadId, IO ())
-withProver pool name comp = do
+withProver pool name comp =
+    withProverException pool name handler comp
+  where handler e = throw e
+
+withProverException :: ConnectionPool ->
+                       String ->
+                       (ProverException -> IO ()) ->  -- On Error
+                       (Prover -> IO ()) ->
+                       IO (ThreadId, IO ())
+withProverException pool name onError comp = do
      prover <- getProver pool name
-     tid <- forkIO $ (comp prover)
+     tid <- forkIO $ (comp prover `catch` onError)
      let release = releaseProver pool prover
      return (tid,release)
 

@@ -1,6 +1,6 @@
-{-# LANGUAGE ScopedTypeVariables, StandaloneDeriving #-}
+{-# LANGUAGE ScopedTypeVariables, StandaloneDeriving, DeriveDataTypeable #-}
 module Hind.Interaction
-  (Prover,
+  (Prover,ProverException(..),
    makeProver, makeProverNamed, closeProver,name,responses,
    sendCommand, sendScript,
    checkSat,isSat,isUnsat,
@@ -17,6 +17,7 @@ import System.IO
 import Control.Concurrent hiding (Chan,readChan,writeChan,newChan,isEmptyChan)
 import Control.Exception
 import Control.Monad
+import Data.Typeable
 import Text.ParserCombinators.Poly
 import System.Log.Logger
 
@@ -29,6 +30,9 @@ data Prover = Prover { requests :: Chan Command
                      , name :: String
                      , depth :: MVar Int
                      }
+
+data ProverException = ProverException String [Command_response] deriving (Show,Typeable)
+instance Exception ProverException
 
 -- Create a prover connection
 makeProverNamed :: String -> String -> IO Prover
@@ -78,8 +82,6 @@ makeProver cmd = do
 
 
 
-
-
 closeProver :: Prover -> IO ()
 closeProver prover = do
   mapM_ killThread (threads prover)
@@ -90,20 +92,21 @@ sendCommand prover cmd = mask_ $ do
   debugM ((name prover) ++ ".interaction") ("req:" ++ show cmd)
   writeChan (requests prover) cmd
   rsp <- readChan (responses prover)
-  rsp' <- reportErrors prover rsp
+  rsp' <- reportErrors prover rsp []
   debugM ((name prover) ++ ".interaction") ("rsp:" ++ show rsp')
   return rsp'
 
-reportErrors p rsp@(Gen_response (Error str)) = do
-  mapM_ (errorM (name p ++ ".interaction")) (lines str)
+reportErrors p rsp@(Gen_response (Error str)) acc = do
+  -- mapM_ (errorM (name p ++ ".interaction")) (lines str)
   empty <- isEmptyChan (responses p)
   if empty
-     then return rsp
+     then throw $ ProverException (name p) (reverse (rsp:acc))
      else do
        rsp' <- readChan (responses p)
-       reportErrors p rsp'
+       reportErrors p rsp' (rsp:acc)
 
-reportErrors p rsp = return rsp
+reportErrors p rsp [] = return rsp
+reportErrors p rsp acc = throw $ ProverException (name p) (reverse (rsp:acc))
 
 
 
