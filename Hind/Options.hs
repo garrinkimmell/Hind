@@ -36,6 +36,7 @@ data HindOpts =  HindOpts {
    -- Logging
   , logLevel :: String -- The output log level
   , logFile :: Maybe String
+  , summaryFile :: Maybe String
   -- SMT Solver
   , smtCmd :: String -- The Solver
   , smtOpts :: String -- Solver options

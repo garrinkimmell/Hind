@@ -1,6 +1,7 @@
 {-# LANGUAGE RankNTypes, ExistentialQuantification, ScopedTypeVariables, TransformListComp, ParallelListComp #-}
 module Hind.InvGen where
 
+import Hind.Constants
 import Hind.Parser(HindFile(..))
 import Hind.Interaction
 import Hind.PathCompression
@@ -165,7 +166,7 @@ invGenStepProcess pool hindFile source sink isDone onError  =
 
     -- time i = (n - i)
     let time i = Term_qual_identifier_ (Qual_identifier (Identifier "-"))
-                   [Term_qual_identifier (Qual_identifier (Identifier "n")),
+                   [Term_qual_identifier (Qual_identifier (Identifier indVar)),
                     Term_spec_constant (Spec_constant_numeral i)]
     let loop :: Maybe POVal -> InvId -> IO ()
         loop cur invId = do
@@ -557,7 +558,7 @@ assertStepInvState p k invId = do
   where tm =
          Assert (Term_qual_identifier_ (Qual_identifier (Identifier (invName invId)))
                  [Term_qual_identifier_ (Qual_identifier (Identifier "-"))
-                  [Term_qual_identifier (Qual_identifier (Identifier "n")),
+                  [Term_qual_identifier (Qual_identifier (Identifier indVar)),
                    Term_spec_constant (Spec_constant_numeral k)]])
 
 

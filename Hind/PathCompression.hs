@@ -1,7 +1,8 @@
 module Hind.PathCompression
-  (distinctStates, stateCharacterisic, addPathCompression) where
+  (distinctStates, stateCharacteristic, addPathCompression) where
 
 import Hind.Parser
+import Hind.Constants
 import Language.SMTLIB
 
 
@@ -13,12 +14,12 @@ addPathCompression hf = hf { hindScript = Script (scr ++ pathCompressionSig hf) 
 
 -- | Assert that states n-k .. n are distinct
 distinctStates k =
-  [stateCharacterisic i| i <- [0..k-1]]
+  [stateCharacteristic i| i <- [0..k-1]]
 
-stateCharacterisic k =
+stateCharacteristic k =
   (Assert (Term_qual_identifier_ (Qual_identifier (Identifier "___path_compression"))
            [Term_qual_identifier_ (Qual_identifier (Identifier "-"))
-            [Term_qual_identifier (Qual_identifier (Identifier "n")),
+            [Term_qual_identifier (Qual_identifier (Identifier indVar)),
              Term_spec_constant (Spec_constant_numeral k)]]))
 
 
