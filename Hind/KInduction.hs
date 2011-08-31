@@ -1,3 +1,4 @@
+{-# LANGUAGE PatternGuards #-}
 module Hind.KInduction
   (parCheck, Result(..)) where
 
@@ -12,7 +13,7 @@ import Hind.ConnectionPool
 
 import Language.SMTLIB hiding (Error,Timeout)
 import Control.Exception
-import Control.Monad
+import  Control.Monad
 
 import Control.Concurrent
   (ThreadId,forkIO,killThread,threadDelay,newMVar, modifyMVar_,readMVar,
@@ -31,9 +32,8 @@ parCheck :: ConnectionPool -> HindOpts -> HindFile -> IO Result
 parCheck pool opts hindFile = withTimeout $ do
 
     -- Add in path compression and step vars.
-    -- let hindFile' = addStepVars $ addPathCompression hindFile
-    let hindFile' = addPathCompression hindFile
-
+    let hindFile' = addStepVars $ addPathCompression hindFile
+    -- let hindFile' = addPathCompression hindFile
 
     -- We track the fork  threads, so we can kill them.
     children <- newMVar []
@@ -65,13 +65,19 @@ parCheck pool opts hindFile = withTimeout $ do
       modifyMVar_ children
          (\tids -> return $ tids ++ [("invGenBase",invGenBase),("invGenStep",invGenStep)])
 
-    let loop basePass = do
+    let loop basePass stepPass = do
           res <- readChan resultChan
           case res of
-            BasePass k -> loop k
+            BasePass k
+              | Just sp <- stepPass,
+                k >= sp -> return (Pass sp)
+              | otherwise -> loop (Just k) stepPass
             BaseFail k -> return (Fail k)
-            StepPass k -> return (Pass k)
-            StepFail k -> loop basePass
+            StepPass k
+              | Just bp <- basePass,
+                k <= bp -> return (Pass k)
+              | otherwise -> loop basePass (Just k)
+            StepFail k -> loop basePass stepPass
 
     let cleanup = do
           tids <- readMVar children
@@ -84,14 +90,14 @@ parCheck pool opts hindFile = withTimeout $ do
 
 
     -- If your timeout is so short that you can't even get to this point, then
-    -- you're pretty screwed. Sorry.
+    -- you're pretty much screwed. Sorry.
     let errHandler e@(ProverException n errs) = do
           let shown = concatMap show errs
           mapM_ (errorM n) $ lines shown
           return (Error e)
 
     flip finally cleanup $ handle errHandler  $ do
-       result <- loop 1
+       result <- loop Nothing Nothing
        case result of
          Pass _ -> noticeM "Hind" (file opts ++ " Passed")
          Fail _ -> noticeM "Hind" (file opts ++ " Failed")

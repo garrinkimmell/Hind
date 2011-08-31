@@ -73,7 +73,9 @@ hindArgs = HindOpts {
            &= groupname "Logging"
        , logFile = Nothing &= help "Log File"
            &= groupname "Logging"
-
+       , summaryFile = Nothing &=
+                       help "File to summarize results of checking a directory of files."
+                       &= groupname "Logging"
 
        } &=
   program "hind" &=

@@ -4,7 +4,7 @@ module Hind.Logging (
                     ) where
 
 
-import Hind.Options(logLevel)
+import Hind.Options(logLevel,summaryFile)
 import System.Log.Logger
 import System.Log.Handler(setFormatter,close)
 import System.Log.Handler.Simple
@@ -28,10 +28,21 @@ setupLogger fname options = do
 
       updateGlobalLogger rootLoggerName (addHandler h)
       updateGlobalLogger rootLoggerName (addHandler oh)
+
       -- By default, all NOTICEs will be logged
       updateGlobalLogger rootLoggerName (setLevel NOTICE)
       mapM_ updateLogger $ splitLogLevel (logLevel options)
 
+      -- Set up the summary file, if requested.
+      case summaryFile options of
+        Just f -> do
+          h <- do lh <- fileHandler f DEBUG
+                  return $ setFormatter lh $
+                           (simpleLogFormatter "$msg")
+          updateGlobalLogger "Hind.summary" (addHandler h)
+          updateGlobalLogger "Hind.summary" (setLevel NOTICE)
+
+        Nothing -> return ()
 
 updateLogger (LogComponent name p) = updateGlobalLogger name (setLevel p)
 

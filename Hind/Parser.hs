@@ -1,10 +1,10 @@
-{-# LANGUAGE TransformListComp, StandaloneDeriving, FlexibleContexts, TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses,DeriveDataTypeable #-}
+{-# LANGUAGE TransformListComp, StandaloneDeriving, FlexibleContexts, TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses,DeriveDataTypeable, PackageImports #-}
 module Hind.Parser where
 
 import Language.SMTLIB
 import Data.List(find)
 import Data.Maybe
-import Control.Monad.Error
+import "monads-fd" Control.Monad.Error
 import Control.Exception
 import Data.Typeable
 
