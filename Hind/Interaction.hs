@@ -18,7 +18,6 @@ import Control.Concurrent hiding (Chan,readChan,writeChan,newChan,isEmptyChan)
 import Control.Exception
 import Control.Monad
 import Data.Typeable
-import Text.ParserCombinators.Poly
 import System.Log.Logger
 
 

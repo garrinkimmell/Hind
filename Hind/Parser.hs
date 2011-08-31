@@ -1,10 +1,12 @@
-{-# LANGUAGE TransformListComp, StandaloneDeriving, FlexibleContexts, TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses #-}
+{-# LANGUAGE TransformListComp, StandaloneDeriving, FlexibleContexts, TypeSynonymInstances, FlexibleInstances, MultiParamTypeClasses,DeriveDataTypeable, PackageImports #-}
 module Hind.Parser where
 
 import Language.SMTLIB
 import Data.List(find)
 import Data.Maybe
-import Control.Monad.Error
+import "monads-fd" Control.Monad.Error
+import Control.Exception
+import Data.Typeable
 
 
 data HindFile = HindFile { hindProperties :: [Identifier]
@@ -23,6 +25,11 @@ hindFile f = do
                fail err
     (Right res) -> do
                return res
+
+data ParseException = ParseException String deriving (Eq,Typeable)
+instance Show ParseException where
+  show (ParseException str) = str
+
 
 
 deriving instance Eq Identifier

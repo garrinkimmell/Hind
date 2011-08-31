@@ -1,6 +1,8 @@
+{-# LANGUAGE PatternGuards #-}
 module Hind.KInduction
   (parCheck, Result(..)) where
 
+import Hind.Constants
 import Hind.Parser(HindFile(..))
 import Hind.Options as Opts
 import Hind.PathCompression
@@ -11,7 +13,7 @@ import Hind.ConnectionPool
 
 import Language.SMTLIB hiding (Error,Timeout)
 import Control.Exception
-import Control.Monad
+import  Control.Monad
 
 import Control.Concurrent
   (ThreadId,forkIO,killThread,threadDelay,newMVar, modifyMVar_,readMVar,
@@ -31,7 +33,7 @@ parCheck pool opts hindFile = withTimeout $ do
 
     -- Add in path compression and step vars.
     let hindFile' = addStepVars $ addPathCompression hindFile
-
+    -- let hindFile' = addPathCompression hindFile
 
     -- We track the fork  threads, so we can kill them.
     children <- newMVar []
@@ -63,13 +65,19 @@ parCheck pool opts hindFile = withTimeout $ do
       modifyMVar_ children
          (\tids -> return $ tids ++ [("invGenBase",invGenBase),("invGenStep",invGenStep)])
 
-    let loop basePass = do
+    let loop basePass stepPass = do
           res <- readChan resultChan
           case res of
-            BasePass k -> loop k
+            BasePass k
+              | Just sp <- stepPass,
+                k >= sp -> return (Pass sp)
+              | otherwise -> loop (Just k) stepPass
             BaseFail k -> return (Fail k)
-            StepPass k -> return (Pass k)
-            StepFail k -> loop basePass
+            StepPass k
+              | Just bp <- basePass,
+                k <= bp -> return (Pass k)
+              | otherwise -> loop basePass (Just k)
+            StepFail k -> loop basePass stepPass
 
     let cleanup = do
           tids <- readMVar children
@@ -82,15 +90,14 @@ parCheck pool opts hindFile = withTimeout $ do
 
 
     -- If your timeout is so short that you can't even get to this point, then
-    -- you're pretty screwed. Sorry.
+    -- you're pretty much screwed. Sorry.
     let errHandler e@(ProverException n errs) = do
-          putStrLn "errHandler caught error"
           let shown = concatMap show errs
           mapM_ (errorM n) $ lines shown
           return (Error e)
 
     flip finally cleanup $ handle errHandler  $ do
-       result <- loop 1
+       result <- loop Nothing Nothing
        case result of
          Pass _ -> noticeM "Hind" (file opts ++ " Passed")
          Fail _ -> noticeM "Hind" (file opts ++ " Failed")
@@ -181,7 +188,7 @@ stepProcess pool hindFile resultChan invChan onError =
     sendCommand p (Assert kstep)
 
     -- Send path compression
-    sendCommand p (stateCharacterisic 0)
+    sendCommand p (stateCharacteristic 0)
 
     let loop k invId = do
           -- Add any additional invariants.
@@ -197,7 +204,7 @@ stepProcess pool hindFile resultChan invChan onError =
           sendCommand p (Assert (prop k))
 
           -- Assert path compression
-          sendCommand p (stateCharacterisic k)
+          sendCommand p (stateCharacteristic k)
 
           res <- isUnsat p
           if res
@@ -213,12 +220,11 @@ stepProcess pool hindFile resultChan invChan onError =
           trans i = Term_qual_identifier_ (Qual_identifier transition)
                      [prev i]
           prev j = Term_qual_identifier_ (Qual_identifier (Identifier "-"))
-                    [Term_qual_identifier (Qual_identifier (Identifier nvar)),
+                    [Term_qual_identifier (Qual_identifier (Identifier indVar)),
                      Term_spec_constant (Spec_constant_numeral j)]
-          nvar = "n"
           kstep = Term_qual_identifier_ (Qual_identifier (Identifier "not"))
                     [Term_qual_identifier_ (Qual_identifier  property)
-                     [Term_qual_identifier (Qual_identifier (Identifier nvar))]]
+                     [Term_qual_identifier (Qual_identifier (Identifier indVar))]]
           Script model = hindScript hindFile
           [property] = hindProperties hindFile
           transition = hindTransition hindFile
@@ -226,15 +232,16 @@ stepProcess pool hindFile resultChan invChan onError =
 
 addStepVars hf = hf { hindScript = Script (stepCmds ++ scr) }
   where Script scr = hindScript hf
-        stepCmds = [Declare_fun "_base" [] (Sort_identifier (Identifier "Int")),
+        stepCmds = [Declare_fun baseVar [] (Sort_identifier (Identifier "Int")),
                     Assert (Term_qual_identifier_ (Qual_identifier (Identifier "="))
-                            [Term_qual_identifier (Qual_identifier (Identifier "_base")),
+                            [Term_qual_identifier (Qual_identifier (Identifier baseVar)),
                              Term_spec_constant (Spec_constant_numeral 0)]),
-                    Declare_fun "n" [] (Sort_identifier (Identifier "Int")),
+                    Declare_fun indVar [] (Sort_identifier (Identifier "Int")),
                     Assert (Term_qual_identifier_ (Qual_identifier (Identifier ">="))
-                            [Term_qual_identifier (Qual_identifier (Identifier "n")),
+                            [Term_qual_identifier (Qual_identifier (Identifier indVar)),
                              Term_spec_constant (Spec_constant_numeral 0)])
                    ]
+
 
 
 

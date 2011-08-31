@@ -7,11 +7,6 @@ import Hind(
        parCheck,Result, -- K-induction
        ConnectionPool, newConnectionPool, closePool
        )
--- import Hind.KInduction
--- import Hind.Parser
--- import Hind.Chan
--- import Hind.Logging
--- import Hind.Options
 
 import Text.Printf
 import Control.Exception
@@ -36,7 +31,7 @@ import Control.Concurrent(forkIO)
 import Criterion.Main (defaultMain, bench)
 import Criterion.Config
 -}
-time :: IO t -> IO t
+time :: IO t -> IO (Double,Double,t) -- cpu time, wall time, result
 time a = do
     wallStart <- getCurrentTime
     start <- getCPUTime
@@ -44,10 +39,12 @@ time a = do
     end   <- getCPUTime
     wallEnd <- getCurrentTime
     let diff = (fromIntegral (end - start)) / (10^12)
+        wallDiff = ((fromRational $toRational $ diffUTCTime wallEnd wallStart) :: Double)
+    -- Note: The CPUTime is meaningless if we're running on a remote server.
     noticeM "Hind" $ printf "Computation time: %0.6f sec" (diff :: Double)
-    noticeM "Hind" $ printf "Wall time: %0.6f sec"
-                 ((fromRational $toRational $ diffUTCTime wallEnd wallStart) :: Double)
-    return v
+    noticeM "Hind" $ printf "Wall time: %0.6f sec" wallDiff
+
+    return (diff,wallDiff,v)
 
 main = do
   options <- getOptions
@@ -64,12 +61,13 @@ checkFile pool options = handle handler $ do
     noticeM "Hind" ("Checking file " ++ (file options))
     parsed <- hindFile (file options)
     -- pool <- newConnectionPool (getSMTCmd options) 5
-    res <- time $ parCheck pool options parsed
+    (cpu,wall,res) <- time $ parCheck pool options parsed
+    noticeM "Hind.summary" $ printf "%s,%s,%0.6f,%0.6f" (show res) (file options) cpu wall
     -- closePool pool
     return (Just res)
   where handler :: SomeException -> IO (Maybe Result)
         handler e = do
-          noticeM "Hind" $
+          noticeM "Hind.summary" $
             printf "%s failed with error:%s\n" (file options) (show e)
           return Nothing
 
