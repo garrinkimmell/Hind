@@ -73,7 +73,10 @@ makeProverNamed cmd nm = do
              reader
 
   depth <- newMVar 0
-  return $ Prover reqChannel rspChannel [readerThd,writerThd] ph nm depth
+  let prover = Prover reqChannel rspChannel [readerThd,writerThd] ph nm depth
+  -- Make sure that it always prints success.
+  sendCommand prover (Set_option (Print_success True))
+  return prover
 
 makeProver :: String -> IO Prover
 makeProver cmd = do
