@@ -1,4 +1,4 @@
-{-# LANGUAGE PatternGuards #-}
+{-# LANGUAGE PatternGuards, ScopedTypeVariables #-}
 module Hind.KInduction
   (parCheck, Result(..)) where
 
@@ -81,11 +81,14 @@ parCheck pool opts hindFile = withTimeout $ do
 
     let cleanup = do
           tids <- readMVar children
-          infoM "Hind" "Killing threads in cleanup"
+          infoM "Hind" ("Killing threads in cleanup" ++ (unwords (map fst tids)))
+
           forM_  tids (\(n,(tid,final)) -> do
                    debugM "Hind" $ "Closing " ++ n
                    killThread tid
-                   final)
+                   final
+                   )
+
 
 
 

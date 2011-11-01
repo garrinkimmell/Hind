@@ -22,6 +22,7 @@ import System.Log.Formatter
 import System.IO
 import System.Directory(doesDirectoryExist,getDirectoryContents)
 import System.FilePath(takeExtension, (</>))
+import System.Exit
 
 import Control.Concurrent(forkIO)
 
@@ -54,6 +55,8 @@ main = do
   pool <- newConnectionPool (getSMTCmd options) 5
   files <- getFiles options
   mapM_ (checkFile pool) files
+  closePool pool
+  exitSuccess
 
 
 checkFile :: ConnectionPool -> HindOpts -> IO (Maybe Result)
