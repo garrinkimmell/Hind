@@ -25,6 +25,7 @@ newConnectionPool proverCmd num = do
 
 closePool :: ConnectionPool -> IO ()
 closePool (ConnectionPool _ pool) = do
+  debugM "Hind" "closePool"
   provers <- takeMVar pool
   mapM_ closeProver provers
 

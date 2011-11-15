@@ -22,6 +22,7 @@ import System.Log.Formatter
 import System.IO
 import System.Directory(doesDirectoryExist,getDirectoryContents)
 import System.FilePath(takeExtension, (</>))
+import System.Exit
 
 import Control.Concurrent(forkIO)
 
@@ -54,12 +55,15 @@ main = do
   pool <- newConnectionPool (getSMTCmd options) 5
   files <- getFiles options
   mapM_ (checkFile pool) files
+  closePool pool
+  exitSuccess
 
 
 checkFile :: ConnectionPool -> HindOpts -> IO (Maybe Result)
 checkFile pool options = handle handler $ do
     noticeM "Hind" ("Checking file " ++ (file options))
     parsed <- hindFile (file options)
+    noticeM "Hind" "Parsed file successfully"
     -- pool <- newConnectionPool (getSMTCmd options) 5
     (cpu,wall,res) <- time $ parCheck pool options parsed
     noticeM "Hind.summary" $ printf "%s,%s,%0.6f,%0.6f" (show res) (file options) cpu wall
