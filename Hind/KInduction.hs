@@ -1,4 +1,4 @@
-{-# LANGUAGE PatternGuards, ScopedTypeVariables #-}
+{-# LANGUAGE PatternGuards, ScopedTypeVariables  #-}
 module Hind.KInduction
   (parCheck, Result(..)) where
 
@@ -10,10 +10,11 @@ import Hind.Interaction
 import Hind.InvGen
 import Hind.Chan
 import Hind.ConnectionPool
+import Hind.Utils
 
 import Language.SMTLIB hiding (Error,Timeout)
 import Control.Exception
-import  Control.Monad
+import Control.Monad
 
 import Control.Concurrent
   (ThreadId,forkIO,killThread,threadDelay,newMVar, modifyMVar_,readMVar,
@@ -32,7 +33,11 @@ parCheck :: ConnectionPool -> HindOpts -> HindFile -> IO Result
 parCheck pool opts hindFile = withTimeout $ do
 
     -- Add in path compression and step vars.
-    let hindFile' = addStepVars $ addPathCompression hindFile
+    let withPrelude = if enablePrelude opts then addStepVars hindFile else hindFile
+    let withPathCompression = if pathCompression opts then addPathCompression withPrelude else withPrelude
+
+
+    let hindFile' = withPathCompression
     -- let hindFile' = addPathCompression hindFile
 
     -- We track the fork  threads, so we can kill them.
@@ -56,14 +61,14 @@ parCheck pool opts hindFile = withTimeout $ do
 
     -- First start the main proof process
     baseProc <- baseProcess pool hindFile' resultChan invChanBase errAction
-    stepProc <- stepProcess pool hindFile' resultChan invChanStep errAction
+    stepProc <- stepProcess pool hindFile' (pathCompression opts) resultChan invChanStep errAction
     modifyMVar_ children (\tids -> return $ tids ++ [("base",baseProc),("step",stepProc)])
 
     when (Opts.invGen opts) $ do
       -- Now kick off the invariant generation process
-      (invGenBase,invGenStep) <- invGenProcess pool hindFile' invChan errAction
+      invGenTID <- invGenProcess pool hindFile' invChan errAction
       modifyMVar_ children
-         (\tids -> return $ tids ++ [("invGenBase",invGenBase),("invGenStep",invGenStep)])
+         (\tids -> return $ tids ++ [("invGen",invGenTID)])
 
     let loop basePass stepPass = do
           res <- readChan resultChan
@@ -134,11 +139,10 @@ parCheck pool opts hindFile = withTimeout $ do
         handler e@(ProverException _ _) = return (Error e) `catch` handler
 
 
-
 data ProverResult = BasePass Integer | BaseFail Integer | StepPass Integer | StepFail Integer
   deriving Show
 
--- baseProcess proverCmd model property resultChan invChan = forkIO $
+
 baseProcess
   :: ConnectionPool -> HindFile -> Chan ProverResult -> Chan POVal ->
      (ProverException -> IO ()) ->
@@ -146,52 +150,73 @@ baseProcess
 baseProcess pool hindFile resultChan invChan onError =
   withProverException pool "Hind.baseProcess" onError $  \p -> do
     -- infoM "Hind.baseProcess" "Base Prover Started"
-    _ <- mapM (sendCommand p) model
+    -- _ <- mapM (sendCommand p) model
+    defineSystem hindFile p
     infoM "Hind.baseProcess" "System Defined"
+
+    let trans' x = trans hindFile (int 0  `minusTerm` int x)
+        prop' = prop hindFile
+        assert = assertTerm p
+
     let loop k invId = do
           -- checkInvariant p invChan
           invId' <- getAndProcessInv p invChan invId
                     (assertBaseInvState p k)
                     (assertBaseInv p k)
 
-          -- send (trans (k - 1)
-          sendCommand p (Assert (trans (k - 1)))
-          -- send (not (p (k))
-          sendCommand p (Assert (prop (k - 1)))
-          res <- isUnsat p
-          if res
-             then do
+          -- send (trans (+ _base k)
+          assert (trans' (k-1))
+
+          -- send (not (p (k)), check for unsat
+          push 1 p
+          -- (not (implies (= _base k-1) (P 0)))
+          assert (notTerm (impliesTerm
+                           (equalTerm base (int 0 `minusTerm` (int (k-1))))
+                           (prop' (int 0))))
+
+          -- assert (notTerm (prop' (k-1)))
+          ok <- isUnsat p
+          pop 1 p
+          if ok
+            then do
+            -- assert the property for the current k
+               when (k > 1) $
+                 assert (prop' (int 0 `minusTerm` int (k-1))) >> return ()
+               infoM "Hind.baseProcess" $ "Passed for step " ++ show k
                writeChan resultChan (BasePass k)
                loop (k+1) invId'
-             else do
+            else do
+               infoM "Hind.baseProcess" $ "Passed for step " ++ show k
                writeChan resultChan (BaseFail k)
     loop 1 NoInv
-  where trans i = Term_qual_identifier_ (Qual_identifier transition)
-                    [Term_spec_constant (Spec_constant_numeral i)]
-
-        prop i =
-          Term_qual_identifier_ (Qual_identifier (Identifier "not"))
-            [Term_qual_identifier_ (Qual_identifier property)
-                    [Term_spec_constant (Spec_constant_numeral i)]]
-        Script model = hindScript hindFile
-        [property] = hindProperties hindFile
-        transition = hindTransition hindFile
 
 stepProcess ::
-  ConnectionPool -> HindFile -> Chan ProverResult -> Chan POVal ->
+  ConnectionPool -> HindFile -> Bool -> Chan ProverResult -> Chan POVal ->
   (ProverException -> IO ()) ->
   IO (ThreadId,IO ())
-stepProcess pool hindFile resultChan invChan onError =
+stepProcess pool hindFile pathCompress resultChan invChan onError =
   withProverException pool "Hind.stepProcess" onError $  \p -> do
+    when pathCompress $ do
+      sendCommand p (Set_option (Produce_unsat_cores True)) >> return ()
+
+
     -- infoM "Hind.stepProcess" "Step Prover Started"
-    _ <- mapM (sendCommand p) model
+    defineSystem hindFile p
     infoM "Hind.stepProcess" "System Defined"
 
-    -- Send '(not (prop n))'
-    sendCommand p (Assert kstep)
+
+    let trans' = trans hindFile . stepTime
+        prop' = prop hindFile . stepTime
+        assert = assertTerm p
+
+
+    -- Send '(not (prop (- _n 0))'
+    assert (notTerm (prop' 0))
+    assert (trans' 0)
+
 
     -- Send path compression
-    sendCommand p (stateCharacteristic 0)
+    when pathCompress $ sendCommand p (stateCharacteristic 0) >> return ()
 
     let loop k invId = do
           -- Add any additional invariants.
@@ -201,44 +226,47 @@ stepProcess pool hindFile resultChan invChan onError =
 
 
           -- Send '(trans (n-k+1)'
-          sendCommand p (Assert (trans (k - 1)))
+          assert (trans' k)
 
           -- Send '(prop (n-k))'
-          sendCommand p (Assert (prop k))
+          assert (prop' k)
 
           -- Assert path compression
-          sendCommand p (stateCharacteristic k)
+          when pathCompress $ do
+            -- sendCommand p (Set_option (Produce_unsat_cores True))
+            sendCommand p (stateCharacteristic k)
+            ok <- isUnsat p
+            when ok $ do
+              debugM "Hind.stepProcess" "Path compression causes unsat."
+              rsp <- sendCommand p Get_unsat_core
+              debugM "Hind.stepProcess" ("Unsat core" ++ show rsp)
+
 
           res <- isUnsat p
           if res
-               then do
-                 writeChan resultChan (StepPass k)
-               else do
+            then do
+              infoM "Hind.stepProcess" $ "Passed for step " ++ show k
+              writeChan resultChan (StepPass k)
+            else do
+                 infoM "Hind.stepProcess" $ "Failed for step " ++ show k
                  writeChan resultChan (StepFail k)
                  loop (k+1) invId'
     loop 1 NoInv
 
-    where prop i = Term_qual_identifier_ (Qual_identifier  property)
-                   [prev i]
-          trans i = Term_qual_identifier_ (Qual_identifier transition)
-                     [prev i]
-          prev j = Term_qual_identifier_ (Qual_identifier (Identifier "-"))
-                    [Term_qual_identifier (Qual_identifier (Identifier indVar)),
-                     Term_spec_constant (Spec_constant_numeral j)]
-          kstep = Term_qual_identifier_ (Qual_identifier (Identifier "not"))
-                    [Term_qual_identifier_ (Qual_identifier  property)
-                     [Term_qual_identifier (Qual_identifier (Identifier indVar))]]
-          Script model = hindScript hindFile
-          [property] = hindProperties hindFile
-          transition = hindTransition hindFile
+
 
 
 addStepVars hf = hf { hindScript = Script (stepCmds ++ scr) }
   where Script scr = hindScript hf
         stepCmds = [Declare_fun baseVar [] (Sort_identifier (Identifier "Int")),
-                    Assert (Term_qual_identifier_ (Qual_identifier (Identifier "="))
+                    -- Assert (Term_qual_identifier_ (Qual_identifier (Identifier "="))
+                    --         [Term_qual_identifier (Qual_identifier (Identifier baseVar)),
+                    --          Term_spec_constant (Spec_constant_numeral 0)]),
+
+                    Assert (Term_qual_identifier_ (Qual_identifier (Identifier "<="))
                             [Term_qual_identifier (Qual_identifier (Identifier baseVar)),
                              Term_spec_constant (Spec_constant_numeral 0)]),
+
                     Declare_fun indVar [] (Sort_identifier (Identifier "Int")),
                     Assert (Term_qual_identifier_ (Qual_identifier (Identifier ">="))
                             [Term_qual_identifier (Qual_identifier (Identifier indVar)),
@@ -248,13 +276,8 @@ addStepVars hf = hf { hindScript = Script (stepCmds ++ scr) }
 
 
 
-
 -- Installation for testing
 z3 :: [Char]
 z3 = "ssh teme z3/bin/z3 -si -smt2 MODEL=true"
 
 cvc3 = "cvc3 -lang smt2"
-
-
-
-

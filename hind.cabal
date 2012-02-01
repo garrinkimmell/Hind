@@ -28,6 +28,7 @@ Library
                  Hind.Logging
                  Hind.Chan
                  Hind.Parser
+                 Hind.Utils
                  Hind.PathCompression
                  Hind.InvGen
                  Hind.Constants

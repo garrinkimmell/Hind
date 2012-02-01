@@ -95,7 +95,7 @@ closeProver prover = do
 
 sendCommand :: Prover -> Command -> IO Command_response
 sendCommand prover cmd = do
-  debugM ((name prover) ++ ".interaction") ("req:" ++ show cmd)
+  debugM ((name prover) ++ ".interaction.request") (show cmd)
   -- We set the uninterruptable mask here, so that we always get a
   -- request/response pair. Otherwise, the system will possibly kill the thread
   -- executing sendcommand somewhere between putting the request and taking the
@@ -105,7 +105,7 @@ sendCommand prover cmd = do
     rsp <- takeMVar (responses prover)
     rsp' <- reportErrors prover rsp []
     return rsp'
-  debugM ((name prover) ++ ".interaction") ("rsp:" ++ show rsp')
+  debugM ((name prover) ++ ".interaction.response") (show rsp')
   return rsp'
 
 -- FIXME: This needs to be improved.
@@ -153,27 +153,32 @@ isUnsat p = do status <- checkSat p
 push,pop :: Int -> Prover -> IO Command_response
 push i p = do
      cur <- takeMVar (depth p)
+     res <- sendCommand p (Push i)
      putMVar (depth p) (cur + i)
-     sendCommand p (Push i)
+     return res
 
 pop i p = do
     cur <- takeMVar (depth p)
+    res <- sendCommand p (Pop i)
     putMVar (depth p) (cur - i)
-    sendCommand p (Pop i)
+    return res
 
+-- reset has a race condition, so we skip it for now. It's really only
+-- important for when we're checking an entire directory
 reset p = do
-   rsp <- sendCommand p (Get_info Name)
-   cur <- readMVar (depth p)
-   when (cur > 0) $ pop cur p >> return ()
-   return ()
-  where
-    isNameInfo
-      (Gp_response
-        (S_exprs
-         [S_exprs [S_expr_constant (Spec_constant_string "name"),
-                   S_expr_constant (Spec_constant_string "Z3")]])) =
-           True
-    isNameInfo _ = False
+  return ()
+  --  rsp <- sendCommand p (Get_info Name)
+  --  cur <- readMVar (depth p)
+  --  when (cur > 0) $ pop cur p >> return ()
+  --  return ()
+  -- where
+  --   isNameInfo
+  --     (Gp_response
+  --       (S_exprs
+  --        [S_exprs [S_expr_constant (Spec_constant_string "name"),
+  --                  S_expr_constant (Spec_constant_string "Z3")]])) =
+  --          True
+  --   isNameInfo _ = False
 
 
 -- | Get the current model
