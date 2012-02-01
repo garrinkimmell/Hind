@@ -270,7 +270,7 @@ addStepVars hf = hf { hindScript = Script (stepCmds ++ scr) }
                     Declare_fun indVar [] (Sort_identifier (Identifier "Int")),
                     Assert (Term_qual_identifier_ (Qual_identifier (Identifier ">="))
                             [Term_qual_identifier (Qual_identifier (Identifier indVar)),
-                             Term_spec_constant (Spec_constant_numeral 0)])
+                             Term_qual_identifier (Qual_identifier (Identifier baseVar))])
                    ]
 
 
