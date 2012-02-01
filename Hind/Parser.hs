@@ -127,6 +127,3 @@ toScript hf = Script $ [transInfo,statesInfo,propInfo,inputInfo,outputInfo] ++ c
            Set_info (Attribute_s_expr ":outputs"
                      (S_exprs
                       [S_expr_symbol nm | Identifier nm <- (hindOutputs hf)]))
-
-
-

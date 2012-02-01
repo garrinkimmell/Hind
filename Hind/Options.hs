@@ -41,12 +41,16 @@ data HindOpts =  HindOpts {
   , smtCmd :: String -- The Solver
   , smtOpts :: String -- Solver options
   , sshRemote :: Maybe String -- Remote host to execute on
+  , enablePrelude :: Bool -- Whether the logic should be set and
+                     -- base/step declarations should be added.
+  , pathCompression :: Bool
 
   -- Hind Options
   , invGen :: Bool
   , timeout :: Maybe Float -- timeout, expressed in seconds
   , delayFinish :: Maybe Float -- amount of time to delay, expressed in seconds,
-                               -- used for debugging
+                   -- used for debugging
+
 
   } deriving (Show,Data,Typeable)
 
@@ -69,6 +73,7 @@ hindArgs = HindOpts {
        , delayFinish = Nothing &=
                        help "Delay finishing model checking for given number of seconds"
                        &= groupname "Debugging"
+       , pathCompression = False &= help "Enable path compression" &= groupname "Model Checking Options"
        , logLevel = "Hind=NOTICE" &= help "Logging Level (DEBUG,INFO,NOTICE)"
            &= groupname "Logging"
        , logFile = Nothing &= help "Log File"
@@ -76,9 +81,10 @@ hindArgs = HindOpts {
        , summaryFile = Nothing &=
                        help "File to summarize results of checking a directory of files."
                        &= groupname "Logging"
+       , enablePrelude = False &= help "Enable the insertion of base and step declarations."
+                         &= groupname "SMT Solver"
 
        } &=
   program "hind" &=
   help "Prove safety properties using k-induction" &=
   summary "hind v0.3, (C) Garrin Kimmell 2011"
-

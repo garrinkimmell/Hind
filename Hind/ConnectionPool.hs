@@ -54,12 +54,12 @@ getProver (ConnectionPool proverCmd pool) name = do
     [] ->  do debugM name "Creating new prover."
               p <- makeProverNamed proverCmd name
               putMVar pool [p]
-              push 1 p
+              -- push 1 p
               return (p { name = name})
     (p:ps) -> do
       putMVar pool ps
       let p' = p {name=name}
-      push 1 p'
+      -- push 1 p'
       return p'
 
 releaseProver :: ConnectionPool -> Prover -> IO ()

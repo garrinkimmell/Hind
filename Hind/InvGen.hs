@@ -1,4 +1,5 @@
-{-# LANGUAGE RankNTypes, ExistentialQuantification, ScopedTypeVariables, TransformListComp, ParallelListComp #-}
+{-# LANGUAGE RankNTypes, ExistentialQuantification, PatternGuards,TypeFamilies,FlexibleInstances,
+ScopedTypeVariables, TransformListComp, ParallelListComp, NoMonomorphismRestriction #-}
 module Hind.InvGen where
 
 import Hind.Constants
@@ -7,6 +8,7 @@ import Hind.Interaction
 import Hind.PathCompression
 import Hind.Chan
 import Hind.ConnectionPool
+import Hind.Utils
 
 import Language.SMTLIB
 
@@ -18,12 +20,211 @@ import Control.Concurrent(forkIO,newEmptyMVar,ThreadId)
 import Control.Concurrent.MVar
 
 import Data.List(sortBy, groupBy,nub,intersect)
+import Data.Maybe(fromJust)
 import System.Log.Logger
 
 
+data POVal = NoInv
+
+
+type Model = [(Identifier,Term)]
+
+class InvGen a where
+  -- | Construct a candidate from a system description
+  fromSystem :: HindFile -> a
+
+
+  -- | Return the equivalence relation
+  equal :: a -> String
+
+  -- | Return the ordering relation
+  ord :: a -> String
+
+  -- | Return a list of all of the state variables
+  vars :: a -> [Identifier]
+
+  -- | Return the partition
+  classes :: a -> [[Identifier]]
+
+  -- | Return the ordered chains.
+  chains :: a -> [[Identifier]]
+
+  -- Given a model, refine the candidate.
+  refine :: a -> Model -> a
+  refine x _ = x
+
+showState c = show (classes c) ++ "\n" ++ unlines (map (foldr connect "" . map show) (chains c))
+  where connect a b = a ++ " " ++  ord c ++ " " ++ b
+
+data BoolInvGen = BoolInvGen [([Bool],[Identifier])] [[Identifier]] -- Equ. classes, chains.
+
+
+instance InvGen BoolInvGen where
+  fromSystem sys
+    | Just states <- lookup Sort_bool (hindStates sys) = BoolInvGen [([],states)] []
+    | otherwise = BoolInvGen [] []
+
+  equal _ = "=" -- FIXME: should actually be ==. This is for testing.
+  ord _ = "implies"
+
+  vars (BoolInvGen state _) = concatMap snd state
+  classes (BoolInvGen state _) = map snd state
+  chains (BoolInvGen state cs) = cs
+
+  refine (BoolInvGen state cs) model =
+     BoolInvGen [(tr,eq) | (tr,eq) <- concat state', not (null eq)]
+     (cs ++ (concat cs'))
+    where
+          (state',cs') = unzip $ map next state
+          next (tr,cls) =
+               let ntrue = [v | (v,t) <- model, v `elem` cls, isTrue t]
+                   nfalse = [v | (v,t) <- model, v `elem` cls, not (isTrue t)]
+                   edge = case (ntrue,nfalse) of
+                             (kt:_,kf:_) -> [[kf,kt]]
+                             _ -> []
+               in ([(True:tr,ntrue), (False:tr,nfalse)], edge)
+
+          isTrue (Term_qual_identifier (Qual_identifier (Identifier "true"))) = True
+          isTrue _ = False
+
+
+
+
+
+
+
+
+  -- | Generate a term representing the candidate. It will have the
+  -- form (and (= (a time) (b time)) (= (a time) (c time))
+  --  (< (a time) (c time)) for the state [[a,b],[c]]
+toTerm st time = foldr and true $
+      concatMap eqclass (classes st) ++ concatMap ords (chains st)
+    where
+      eq = binop (equal st)
+      lt = binop (ord st)
+      and = binop "and"
+
+      var x = Term_qual_identifier_ (Qual_identifier x) [time]
+      binop op a b  = Term_qual_identifier_ (Qual_identifier (Identifier op))
+                 [a,b]
+      eqclass [] = []
+      eqclass [c] = []
+      eqclass (c:cs) = [eq (var c) (var c') | c' <- cs]
+      -- Create the implication graph for the set of states
+      ords [] = []
+      ords [r] = []
+      ords (r:s:ss) = (lt (var r) (var s)):(ords (s:ss))
+      true = Term_qual_identifier (Qual_identifier (Identifier "true"))
+
+
+invGenProcess pool hindFile invChan onError =
+  withProverException pool "Hind.invGen" onError $ \p -> do
+   infoM "Hind.invGen" "Started invariant generation"
+   defineSystem hindFile p
+
+   let initialState :: BoolInvGen
+       initialState = fromSystem hindFile
+
+   let trans' = trans hindFile
+       assert = assertTerm p
+
+   -- Iteratively check a candidate, and refine using a
+   -- counterexample. We exit when we get a property
+   -- that holds for step k and k+1 without refinement.
+   let baseRefine candidate k = do
+         assert (trans' (baseTime k))
+         baseRefine' False candidate k
+
+       baseRefine' refined candidate k = do
+
+         push 1 p -- Candidate Push
+         let cterm = toTerm candidate (baseTime k)
+         infoM "Hind.invGen" ("Checking candidate" ++ show cterm)
+         infoM "Hind.invGen" (showState candidate)
+         assert (notTerm cterm)
+         ok <- isUnsat p
+
+         if ok
+           then do
+             pop 1 p -- Candidate Pop
+             if refined
+               then baseRefine candidate (k+1)
+               else return (candidate,k)
+           else do
+             model <- getValuation p (vars candidate) (baseTime k)
+             pop 1 p -- Candidate Pop
+             infoM "Hind.invGen" $ "Got counterexample" ++ show model
+             let model' = refine candidate model
+             baseRefine' True model' k
+
+       stepRefine candidate k = do
+         -- Assert the transition relation
+         mapM_ assert [trans' (stepTime i) | i <- [0..k+1]]
+         -- Assert the candidate for prev.
+         mapM_ assert [toTerm candidate (stepTime i) | i <- [1..k+1]]
+         stepRefine' candidate
+
+       stepRefine' candidate = do
+         push 1 p
+         let cterm = toTerm candidate (stepTime 0)
+         infoM "Hind.invGen" ("Checking candidate" ++ show cterm)
+         assert (notTerm cterm)
+         ok <- isUnsat p
+         if ok
+           then do
+             pop 1 p
+             return candidate
+           else do
+             model <- getValuation p (vars candidate) (stepTime 0)
+             pop 1 p
+             stepRefine' (refine candidate model)
+
+
+
+
+
+   push 1 p -- Context for base transition assertions
+   (baseCandidate,baseK) <- baseRefine initialState 0
+   pop 1  p -- Close context  for base transition assertions
+
+   infoM "Hind.invGen" $ "Base process found candidate  " ++ show (toTerm baseCandidate (baseTime baseK))
+   push 1 p -- Context for step transition assertions
+   stepCandidate <- stepRefine baseCandidate baseK
+   pop 1 p -- Close context for step transition assertions
+   return ()
+
+-- | This works for getting a valuation *from Z3*. The response is
+-- parsed as a get-proof response, for whatever reason. This is a
+-- colossal pain in the ass.
+getValuation p vars time = do
+  vals <- sendCommand p (Get_value [Term_qual_identifier_ (Qual_identifier v) [time] | v <- vars])
+  return (getVals vals)
+
+getVals :: Command_response -> [(Identifier,Term)]
+getVals (Gv_response vals) = [(n,val) | (Term_qual_identifier_ (Qual_identifier  n) _, val) <- vals]
+getVals (Gp_response (S_exprs exprs)) = map val exprs
+  where val (S_exprs [S_exprs [S_expr_symbol n,time],val]) = (Identifier n,sExprVal val)
+        sExprVal (S_expr_constant c) = Term_spec_constant c
+        sExprVal (S_expr_symbol s) = Term_qual_identifier (Qual_identifier (Identifier s))
+        sExprVal s = error $ "sExprVal not defined for " ++ show s
+
+
+
+getAndProcessInv :: a -> b -> c -> d -> e -> IO POVal
+getAndProcessInv _ _ _ _ _ = return NoInv
+assertBaseInvState :: a -> b -> IO ()
+assertBaseInvState _ _ = return ()
+assertBaseInv _ = return ()
+assertStepInvState :: a -> b -> IO ()
+assertStepInvState _ _ = return ()
+assertStepInv :: a -> b -> IO ()
+assertStepInv _ _ = return ()
+
+
+{-
 -- Invariant Generation
 -- invGenProcess proverCmd model property initPO invChan = forkIO $ do
-invGenProcess pool hindFile invChan onError = do
+invGenProcess' pool hindFile invChan onError = do
   candidatesChan <- newChan
   basePassed <- newChan
   candidateDone <- newEmptyMVar
@@ -396,7 +597,6 @@ poRefine prev model
 
 
 
-
 negateTerm term =
   (Term_qual_identifier_ (Qual_identifier (Identifier "not")) [term])
 
@@ -589,5 +789,4 @@ getAndProcessInv p invChan invId onOld onNew = do
       infoM (name p) $  "Asserting new invariant" ++ show newInv
       onNew newInv
       return newInv
-
-
+-}
