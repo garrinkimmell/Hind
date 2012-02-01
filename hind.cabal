@@ -15,10 +15,10 @@ Cabal-Version:       >= 1.8
 Library
   Build-Depends: base >= 4 && < 5, containers, pretty,
                  directory, random, process,
-                 smt-lib == 0.0.4, polyparse >= 1.5,
+                 smt-lib == 0.0.4,
                  hslogger, monads-fd, stm, cmdargs, filepath,
-                 attoparsec-enumerator == 0.2.0.4,
-                 enumerator == 0.4.14, mtl == 2.0.1.0
+                 attoparsec-enumerator, 
+                 enumerator, mtl == 2.0.1.0
 
   Ghc-Options: -threaded -O2
   Exposed-modules: Hind
