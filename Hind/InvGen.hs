@@ -19,10 +19,13 @@ import Control.Monad
 import Control.Concurrent(forkIO,newEmptyMVar,ThreadId)
 import Control.Concurrent.MVar
 
-import Data.List(sortBy, groupBy,nub,intersect)
+import Data.List(sort,sortBy, groupBy,nub,intersect,(\\))
 import Data.Maybe(fromJust)
 import System.Log.Logger
 
+
+import qualified Data.Map as M
+import qualified Data.Set as S
 
 data POVal = NoInv
 
@@ -46,50 +49,90 @@ class InvGen a where
   -- | Return the partition
   classes :: a -> [[Identifier]]
 
-  -- | Return the ordered chains.
-  chains :: a -> [[Identifier]]
+  -- | Return the ordered chains. These aren't actually chains,
+  -- they're just ordered pairs. FIXME: rename this.
+  chains :: a -> [(Identifier,Identifier)]
 
   -- Given a model, refine the candidate.
   refine :: a -> Model -> a
   refine x _ = x
 
-showState c = show (classes c) ++ "\n" ++ unlines (map (foldr connect "" . map show) (chains c))
-  where connect a b = a ++ " " ++  ord c ++ " " ++ b
+showState c = show (classes c) ++ "\n" ++
+              unlines (map  connect (chains c))
+  where connect (a,b) = show a ++  ord c ++ show b
 
-data BoolInvGen = BoolInvGen [([Bool],[Identifier])] [[Identifier]] -- Equ. classes, chains.
+data BoolInvGen =
+  BoolInvGen [([Identifier])] [(Identifier,Identifier)] -- Equ. classes, chains.
 
 
 instance InvGen BoolInvGen where
   fromSystem sys
-    | Just states <- lookup Sort_bool (hindStates sys) = BoolInvGen [([],states)] []
+    | Just states <- lookup Sort_bool (hindStates sys) = BoolInvGen [states] []
     | otherwise = BoolInvGen [] []
 
-  equal _ = "=" -- FIXME: should actually be ==. This is for testing.
+  equal _ = "="
   ord _ = "implies"
 
-  vars (BoolInvGen state _) = concatMap snd state
-  classes (BoolInvGen state _) = map snd state
+  vars (BoolInvGen state _) = concat state
+  classes (BoolInvGen state _) = state
   chains (BoolInvGen state cs) = cs
 
   refine (BoolInvGen state cs) model =
-     BoolInvGen [(tr,eq) | (tr,eq) <- concat state', not (null eq)]
-     (cs ++ (concat cs'))
+     BoolInvGen [eq | eq <- concat state', not (null eq)]
+      cs'
     where
-          (state',cs') = unzip $ map next state
-          next (tr,cls) =
+
+          state' = map snd newNodes
+          cs' = concatMap nextEdge newNodes
+
+          nextNode cls@(rep:_) =
                let ntrue = [v | (v,t) <- model, v `elem` cls, isTrue t]
                    nfalse = [v | (v,t) <- model, v `elem` cls, not (isTrue t)]
-                   edge = case (ntrue,nfalse) of
-                             (kt:_,kf:_) -> [[kf,kt]]
-                             _ -> []
-               in ([(True:tr,ntrue), (False:tr,nfalse)], edge)
+
+               in (rep,[nfalse,ntrue])
+          newNodes = map nextNode state
+
+
+          nextEdge (r,[f:_,t:ts]) = (f,t):[(t,dest p) | (r,p) <- cs]
+          nextEdge (r,[[],t:_]) = [(t,dest p) | (r,p) <- cs]
+          nextEdge (r,[f:_,[]]) = [(f,dest p) | (r,p) <- cs]
+          dest p = case lookup p newNodes of
+                     Nothing -> p -- This should be an error
+                     Just [a:_,_] -> a
+                     Just [[],a:_] -> a
+
 
           isTrue (Term_qual_identifier (Qual_identifier (Identifier "true"))) = True
           isTrue _ = False
 
 
 
+-- Partial order insertion for traces.
+-- We represent a partial order by a list of pairs (a,b). We want to
+-- build a new partial order that takes into account a new step of the
+-- trace.
 
+type Sigma = M.Map String (S.Set String)
+
+-- | FIXME: Dont' use list comprehensions, use map/fold directly on
+-- sets and maps.
+initialSigma s = M.fromList [(k,S.delete k s) | k <- S.toList s]
+nextSigma sig vals = M.mapWithKey f sig
+  where f k v = S.filter (cmp k) v
+        cmp a b = let Just av = lookup a vals
+                      Just bv = lookup b vals
+                  in av <= bv
+
+
+i = initialSigma (S.fromList ["a","b","c","d"])
+j = nextSigma i [("a",0),("b",1),("c",2),("d",3)]
+k = nextSigma j [("a",0),("b",2),("c",1),("d",3)]
+
+--suc :: Sigma -> Sigma
+suc sigma = M.map f sigma
+  where f v = v S.\\ getAll v
+        getAll vals = S.unions $ S.toList $
+                      S.map (\k -> M.findWithDefault S.empty k sigma) vals
 
 
 
@@ -98,7 +141,7 @@ instance InvGen BoolInvGen where
   -- form (and (= (a time) (b time)) (= (a time) (c time))
   --  (< (a time) (c time)) for the state [[a,b],[c]]
 toTerm st time = foldr and true $
-      concatMap eqclass (classes st) ++ concatMap ords (chains st)
+      concatMap eqclass (classes st) ++ map ords (chains st)
     where
       eq = binop (equal st)
       lt = binop (ord st)
@@ -111,9 +154,7 @@ toTerm st time = foldr and true $
       eqclass [c] = []
       eqclass (c:cs) = [eq (var c) (var c') | c' <- cs]
       -- Create the implication graph for the set of states
-      ords [] = []
-      ords [r] = []
-      ords (r:s:ss) = (lt (var r) (var s)):(ords (s:ss))
+      ords (a,b) = lt (var a) (var b)
       true = Term_qual_identifier (Qual_identifier (Identifier "true"))
 
 
