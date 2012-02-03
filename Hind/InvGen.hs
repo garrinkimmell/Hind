@@ -35,7 +35,17 @@ type Model = [(Identifier,Term)]
 class InvGen a where
   -- | Construct a candidate from a system description
   fromSystem :: HindFile -> a
+  fromSystem sys
+    | Just states <- lookup (typeName (undefined :: a)) (hindStates sys) =
+                       fromStates states
+    | otherwise = fromStates []
 
+
+  -- | Construct a candidate given a list of states
+  fromStates :: [Identifier] -> a
+
+  -- | Return the name of this type as an SMT identifier
+  typeName :: a -> Sort
 
   -- | Return the equivalence relation
   equal :: a -> String
@@ -45,6 +55,7 @@ class InvGen a where
 
   -- | Return a list of all of the state variables
   vars :: a -> [Identifier]
+  vars x = concat $ classes x
 
   -- | Return the partition
   classes :: a -> [[Identifier]]
@@ -66,14 +77,11 @@ data BoolInvGen =
 
 
 instance InvGen BoolInvGen where
-  fromSystem sys
-    | Just states <- lookup Sort_bool (hindStates sys) = BoolInvGen [states] []
-    | otherwise = BoolInvGen [] []
-
+  fromStates states = BoolInvGen [states] []
+  typeName _ = Sort_bool
   equal _ = "="
   ord _ = "implies"
 
-  vars (BoolInvGen state _) = concat state
   classes (BoolInvGen state _) = state
   chains (BoolInvGen state cs) = cs
 
@@ -112,7 +120,7 @@ instance InvGen BoolInvGen where
 -- build a new partial order that takes into account a new step of the
 -- trace.
 
-type Sigma = M.Map String (S.Set String)
+type PO = M.Map Identifier (S.Set Identifier)
 
 -- | FIXME: Dont' use list comprehensions, use map/fold directly on
 -- sets and maps.
@@ -137,15 +145,67 @@ suc sigma = M.map f sigma
 
 
 
+data IntInvGen = IntInvGen [[Identifier]] PO deriving Show
+
+instance InvGen IntInvGen where
+
+  fromStates states = IntInvGen [states] (initialSigma (S.fromList states))
+  typeName _ = Sort_identifier (Identifier "int")
+
+
+
+  equal _ = "="
+  ord _ = "<="
+  classes (IntInvGen states _) = states
+  chains (IntInvGen states po) =
+    [(from,to) | (from,tos) <- M.toList red,
+                 to <- S.toList tos]
+
+    where red = suc po'
+          po' = M.mapMaybeWithKey f po
+          f node edges
+            | S.member node reps =
+               Just $ S.filter (\next -> S.member next reps) edges
+            | otherwise = Nothing
+          reps = S.fromList $ map head states
+
+  refine candidate@(IntInvGen states po) model = IntInvGen states' po'
+    where model' =
+           [(n,v) | (n,Term_spec_constant (Spec_constant_numeral v)) <- model]
+          states' = filter (not . null) $ concatMap nextNodes states
+          po' = nextSigma po model'
+          nextNodes eqclass =
+            let raw = [(v,val) | v <- eqclass,
+                       (v',val) <- model', v == v'
+                      ]
+                sorted = sortBy (\a b -> compare (snd a) (snd b)) raw
+                grouped = map (map fst) $ groupBy (\a b -> snd a == snd b) sorted
+            in grouped
+
+
+po (IntInvGen _ p) = p
+a = [(Identifier x) |
+     x <- ["a","b","c","d","e"]]
+v0 = zip a [Term_spec_constant (Spec_constant_numeral n) | n <- [0,0,1,1,1]]
+v1 = zip a [Term_spec_constant (Spec_constant_numeral n) | n <- [0,1,2,3,3]]
+v2 = zip a [Term_spec_constant (Spec_constant_numeral n) | n <- [0,2,1,3,3]]
+
+t = IntInvGen [a] (initialSigma (S.fromList a))
+
+test = refine (refine (refine t v0) v1) v2
+
+
   -- | Generate a term representing the candidate. It will have the
   -- form (and (= (a time) (b time)) (= (a time) (c time))
   --  (< (a time) (c time)) for the state [[a,b],[c]]
-toTerm st time = foldr and true $
+toTerm st time = and $
       concatMap eqclass (classes st) ++ map ords (chains st)
     where
       eq = binop (equal st)
       lt = binop (ord st)
-      and = binop "and"
+      and [] = true
+      and [a] = a
+      and props = Term_qual_identifier_ (Qual_identifier (Identifier "and")) props
 
       var x = Term_qual_identifier_ (Qual_identifier x) [time]
       binop op a b  = Term_qual_identifier_ (Qual_identifier (Identifier op))
