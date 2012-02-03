@@ -188,6 +188,7 @@ baseProcess pool hindFile resultChan invChan onError =
             else do
                infoM "Hind.baseProcess" $ "Passed for step " ++ show k
                writeChan resultChan (BaseFail k)
+    _ <- isUnsat p
     loop 1 NoInv
 
 stepProcess ::
