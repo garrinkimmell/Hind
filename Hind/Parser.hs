@@ -13,6 +13,7 @@ data HindFile = HindFile { hindProperties :: [Identifier]
                          , hindInputs :: [Identifier]
                          , hindOutputs :: [Identifier]
                          , hindStates :: [(Sort,[Identifier])]
+                         , hindLocals :: [(Sort,[Identifier])]
                          , hindTransition :: Identifier
                          , hindCoverage :: [Identifier]
                          , hindScript :: Script
@@ -43,14 +44,18 @@ processScript :: MonadError String m => Script -> m HindFile
 processScript scr@(Script cmds) = do
   trans <- getTransition cmds
   states <- getStates cmds
+  locals <- getLocals cmds
   properties <- getProperties cmds
   inputs <- getInputs cmds
   outputs <- getOutputs cmds
   coverage <- getCoverage cmds
   let groupedStates = [(head ty,n)  | (ty,n) <- states,
-                        then group by ty]
+                       then group by ty]
+  let groupedLocals = [(head ty,n)  | (ty,n) <- locals,
+                         then group by ty]
+
   return $
-         HindFile properties inputs outputs groupedStates trans coverage
+         HindFile properties inputs outputs groupedStates groupedLocals trans coverage
                     (Script (filterInfos cmds))
 
 
@@ -61,6 +66,11 @@ getTransition cmds = do
 getStates cmds = do
   (Set_info (Attribute_s_expr _ (S_exprs ss))) <- getInfo ":states" cmds
   return $ getTypes cmds [s | S_expr_symbol s <- ss]
+
+getLocals cmds = do
+  (Set_info (Attribute_s_expr _ (S_exprs ss))) <- getInfo ":locals" cmds
+  return $ getTypes cmds [s | S_expr_symbol s <- ss]
+
 
 getProperties cmds = do
    (Set_info (Attribute_s_expr _ (S_exprs ss))) <- getInfo ":properties" cmds
@@ -97,7 +107,7 @@ getTypes cmds ids = catMaybes $ map idRange cmds
 
 filterInfos = filter (not . hindInfo)
   where hindInfo (Set_info (Attribute_s_expr attr  _)) =
-          attr `elem` [":states",":transition",":properties", ":inputs", ":outputs",":coverage"]
+          attr `elem` [":states",":transition",":properties", ":inputs", ":outputs",":coverage",":locals"]
         hindInfo _ = False
 
 

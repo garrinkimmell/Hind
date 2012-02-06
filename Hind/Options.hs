@@ -46,7 +46,7 @@ data HindOpts =  HindOpts {
   , pathCompression :: Bool
 
   -- Hind Options
-  , invGen :: Bool
+  , intInvGen, boolInvGen :: Bool
   , timeout :: Maybe Float -- timeout, expressed in seconds
   , delayFinish :: Maybe Float -- amount of time to delay, expressed in seconds,
                    -- used for debugging
@@ -65,8 +65,11 @@ hindArgs = HindOpts {
        , sshRemote = Nothing &= help "Remote Host"
            &= name "remote"
            &= groupname "SMT Solver"
-       , invGen = False &= help "Enable Invariant Generation" &= typ "Boolean"
-                  &= groupname "Model Checking Options"
+       , intInvGen = False &= help "Enable Integer Invariant Generation" &= typ "Boolean"
+                     &= groupname "Model Checking Options"
+       , boolInvGen = False &= help "Enable Boolean Invariant Generation" &= typ "Boolean"
+                      &= groupname "Model Checking Options"
+
        , timeout = Nothing
              &= help "Timeout for model checking"
              &= groupname "Model Checking Options"

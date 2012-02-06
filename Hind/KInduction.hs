@@ -64,11 +64,18 @@ parCheck pool opts hindFile = withTimeout $ do
     stepProc <- stepProcess pool hindFile' (pathCompression opts) resultChan invChanStep errAction
     modifyMVar_ children (\tids -> return $ tids ++ [("base",baseProc),("step",stepProc)])
 
-    when (Opts.invGen opts) $ do
+    when (Opts.intInvGen opts) $ do
       -- Now kick off the invariant generation process
-      invGenTID <- invGenProcess pool hindFile' invChan errAction
+      invGenTID <- invGenProcess (undefined :: IntInvGen) pool hindFile' invChan errAction
       modifyMVar_ children
-         (\tids -> return $ tids ++ [("invGen",invGenTID)])
+        (\tids -> return $ tids ++ [("intInvGen",invGenTID)])
+
+    when (Opts.boolInvGen opts) $ do
+      -- Now kick off the invariant generation process
+      invGenTID <- invGenProcess (undefined :: BoolInvGen) pool hindFile' invChan errAction
+      modifyMVar_ children
+         (\tids -> return $ tids ++ [("boolInvGen",invGenTID)])
+
 
     let loop basePass stepPass = do
           res <- readChan resultChan
