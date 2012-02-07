@@ -1,4 +1,5 @@
-{-# LANGUAGE RankNTypes, ExistentialQuantification, PatternGuards,TypeFamilies,FlexibleInstances,
+{-# LANGUAGE RankNTypes, ExistentialQuantification,
+PatternGuards,TypeFamilies,FlexibleInstances, StandaloneDeriving,
 ScopedTypeVariables, TransformListComp, ParallelListComp, NoMonomorphismRestriction #-}
 module Hind.InvGen where
 
@@ -19,7 +20,7 @@ import Control.Monad
 import Control.Concurrent(forkIO,newEmptyMVar,ThreadId)
 import Control.Concurrent.MVar
 
-import Data.List(sort,sortBy, groupBy,nub,intersect,(\\))
+import Data.List(find, sort,sortBy, groupBy,nub,intersect,(\\))
 import Data.Maybe(fromJust,fromMaybe)
 import System.Log.Logger
 
@@ -28,9 +29,6 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 
 data POVal = NoInv
-
-
-
 
 type Model = [(Identifier,Term)]
 
@@ -71,7 +69,7 @@ class InvGen a where
   refine x _ = x
 
 -- | Print out a candidate
-showState c = show (classes c) ++ "\n" ++
+showState c = show ([cls | cls <- classes c, length cls > 1]) ++ "\n" ++
               unlines (map  connect (chains c))
   where connect (a,b) = show a ++  ord c ++ show b
 
@@ -98,81 +96,59 @@ toTerm st time = and $
       true = Term_qual_identifier (Qual_identifier (Identifier "true"))
 
 
-data BoolInvGen =
-  BoolInvGen [([Identifier])] [(Identifier,Identifier)] -- Equ. classes, chains.
+-- data BoolInvGen =
+--   BoolInvGen [([Identifier])] [(Identifier,Identifier)] -- Equ. classes, chains.
+
+data BoolInvGen = BoolInvGen [[Identifier]] PO deriving (Eq)
 
 instance InvGen BoolInvGen where
-  fromStates states = BoolInvGen [states] []
+  -- fromStates states = BoolInvGen [states] []
+  fromStates states = BoolInvGen [states] (initialSigma (S.fromList states))
+
   typeName _ = Sort_bool
   equal _ = "="
   ord _ = "implies"
 
   classes (BoolInvGen state _) = state
-  chains (BoolInvGen state cs) = [] -- cs
+  -- chains (BoolInvGen state cs) = [] -- cs
+  chains (BoolInvGen states po) =
+    [(from,to) | (from,tos) <- M.toList red,
+                 to <- S.toList tos]
 
-  refine (BoolInvGen state cs) model =
-     BoolInvGen [eq | eq <- concat state', not (null eq)]
-      cs'
-    where
-
-          state' = map snd newNodes
-          cs' = nub $ concatMap nextEdge newNodes
-
-          nextNode cls@(rep:_) =
-               let ntrue = [v | (v,t) <- model, v `elem` cls, isTrue t]
-                   nfalse = [v | (v,t) <- model, v `elem` cls, not (isTrue t)]
-               in (rep,[nfalse,ntrue])
-          newNodes = map nextNode state
-
-          nextEdge (r,[f:_,t:ts]) = (f,t):[(t,dest p) | (r,p) <- cs]
-          nextEdge (r,[[],t:_]) = [(t,dest p) | (r,p) <- cs]
-          nextEdge (r,[f:_,[]]) = [(f,dest p) | (r,p) <- cs]
-          dest p = case lookup p newNodes of
-                     Nothing -> p -- This should be an error
-                     Just [a:_,_] -> a
-                     Just [[],a:_] -> a
-
-          isTrue (Term_qual_identifier (Qual_identifier (Identifier "true"))) = True
-          isTrue _ = False
+    where red = suc po'
+          po' = M.mapMaybeWithKey f po
+          f node edges
+            | S.member node reps =
+               Just $ S.filter (\next -> S.member next reps) edges
+            | otherwise = Nothing
+          reps = S.fromList $ map head states
 
 
+  refine candidate@(BoolInvGen states po) model = BoolInvGen states' po'
+    where model' = map getBool model :: [(Identifier,Bool)]
+           -- [(n,v) | (n,Term_spec_constant (Spec_constant_numeral v)) <- model]
+          states' = filter (not . null) $ concatMap nextNodes states
+          po' = nextSigma po model'
+          nextNodes eqclass =
+            let raw = [(v,val) | v <- eqclass,
+                       (v',val) <- model', v == v'
+                      ]
+                sorted = sortBy (\a b -> compare (snd a) (snd b)) raw
+                grouped = map (map fst) $ groupBy (\a b -> snd a == snd b) sorted
+            in grouped
 
--- Partial order insertion for traces.
--- We represent a partial order by a list of pairs (a,b). We want to
--- build a new partial order that takes into account a new step of the
--- trace.
-
-type PO = M.Map Identifier (S.Set Identifier)
-
--- | FIXME: Dont' use list comprehensions, use map/fold directly on
--- sets and maps.
-initialSigma s = M.fromList [(k,S.delete k s) | k <- S.toList s]
-nextSigma sig vals = M.mapWithKey f sig
-  where f k v = S.filter (cmp k) v
-        cmp a b = let Just av = lookup a vals
-                      Just bv = lookup b vals
-                  in av <= bv
-
--- i,j,k are Testing
-i = initialSigma (S.fromList ["a","b","c","d"])
-j = nextSigma i [("a",0),("b",1),("c",2),("d",3)]
-k = nextSigma j [("a",0),("b",2),("c",1),("d",3)]
-
---suc :: Sigma -> Sigma
-suc sigma = M.map f sigma
-  where f v = v S.\\ getAll v
-        getAll vals = S.unions $ S.toList $
-                      S.map (\k -> M.findWithDefault S.empty k sigma) vals
+          getBool (n,Term_spec_constant c) = error$ show  (n,c)
+          getBool (n,Term_qual_identifier (Qual_identifier (Identifier i)))
+            | i == "false" = (n,False)
+            | i == "true" = (n,True)
+            | otherwise = throw $ ProverException ("Can't get boolean value of " ++ i) []
 
 
-
-data IntInvGen = IntInvGen [[Identifier]] PO deriving Show
+data IntInvGen = IntInvGen [[Identifier]] PO deriving (Eq)
 instance InvGen IntInvGen where
 
   fromStates states = IntInvGen [states] (initialSigma (S.fromList states))
   typeName _ = Sort_identifier (Identifier "Int")
-
-
 
   equal _ = "="
   ord _ = "<="
@@ -202,17 +178,35 @@ instance InvGen IntInvGen where
                 grouped = map (map fst) $ groupBy (\a b -> snd a == snd b) sorted
             in grouped
 
--- Testing
--- po (IntInvGen _ p) = p
--- a = [(Identifier x) |
---      x <- ["a","b","c","d","e"]]
--- v0 = zip a [Term_spec_constant (Spec_constant_numeral n) | n <- [0,0,1,1,1]]
--- v1 = zip a [Term_spec_constant (Spec_constant_numeral n) | n <- [0,1,2,3,3]]
--- v2 = zip a [Term_spec_constant (Spec_constant_numeral n) | n <- [0,2,1,3,3]]
 
--- t = IntInvGen [a] (initialSigma (S.fromList a))
 
--- test = refine (refine (refine t v0) v1) v2
+-- Partial order insertion for traces.
+-- We represent a partial order as a graph, from a node to _successor_
+-- nodes. Note this representation gives uses irreflexive, transitive
+-- closure of the partial order.
+--
+type PO = M.Map Identifier (S.Set Identifier)
+
+-- | FIXME: Dont' use list comprehensions, use map/fold directly on
+-- sets and maps.
+initialSigma s = M.fromList [(k,S.delete k s) | k <- S.toList s]
+nextSigma sig vals = M.mapWithKey f sig
+  where f k v = S.filter (cmp k) v
+        cmp a b = let Just av = lookup a vals
+                      Just bv = lookup b vals
+                  in av <= bv
+
+-- i,j,k are Testing
+i = initialSigma (S.fromList ["a","b","c","d"])
+j = nextSigma i [("a",0),("b",1),("c",2),("d",3)]
+k = nextSigma j [("a",0),("b",2),("c",1),("d",3)]
+
+-- Calculate the transitive reduction of a PO structure. It's
+-- critical that the graph be acyclic.
+suc sigma = M.map f sigma
+  where f v = v S.\\ getAll v
+        getAll vals = S.unions $ S.toList $
+                      S.map (\k -> M.findWithDefault S.empty k sigma) vals
 
 
 
@@ -223,10 +217,20 @@ invGenProcess candidateType pool hindFile invChan onError =
    infoM "Hind.invGen" "Started invariant generation"
    defineSystem hindFile p
 
-   let initialState = fromSystem hindFile `asTypeOf` candidateType
+   -- Subterm handling
+   let (definitions,names) = gatherTerms hindFile
+       relevant = [n | (ty,n,_) <- names, ty == typeName candidateType]
+   mapM_ (sendCommand p) definitions
+
+
+
+   let initialState = fromStates relevant  `asTypeOf` candidateType -- fromSystem hindFile `asTypeOf` candidateType
 
    let trans' = trans hindFile
        assert = assertTerm p
+       subterms time =
+         Term_qual_identifier_ (Qual_identifier (Identifier "___subterms___"))
+                                [time]
 
    -- Iteratively check a candidate, and refine using a
    -- counterexample. We exit when we get a property
@@ -234,14 +238,17 @@ invGenProcess candidateType pool hindFile invChan onError =
    let baseRefine candidate k = do
          assert (trans' (baseTime k))
          assert (baseTimeIs k)
+         -- Assert the subterm equalities.
+         mapM_ assert [subterms (baseTime k') | k' <- [0..k]]
+
          baseRefine' False candidate k
 
        baseRefine' refined candidate k = do
 
          push 1 p -- Candidate Push
          let cterm = toTerm candidate (baseTime k)
-         infoM "Hind.invGen" (showState candidate)
-         infoM "Hind.invGen" ("Checking candidate (base " ++ show k ++ ")\n\t" ++ show cterm)
+         debugM "Hind.invGen" ("Checking candidate (base " ++ show k ++ ")")
+         debugM "Hind.invGen" (showState candidate)
 
          assert $ notTerm (baseTimeIs k `impliesTerm` cterm)
          ok <- isUnsat p
@@ -256,7 +263,7 @@ invGenProcess candidateType pool hindFile invChan onError =
            else do
              model <- getValuation p (vars candidate) (baseTime k)
              pop 1 p -- Candidate Pop
-             infoM "Hind.invGen" $ "Got counterexample:\n\t" ++ show model
+             infoM "Hind.invGen" $ "Got counterexample:\n\t" ++ show (formatModel  model)
              let model' = refine candidate model
              baseRefine' True model' k
 
@@ -266,18 +273,24 @@ invGenProcess candidateType pool hindFile invChan onError =
          mapM_ assert [trans' (stepTime i) | i <- [0..k+1]]
          -- Assert the candidate for prev.
          mapM_ assert [toTerm candidate (stepTime i) | i <- [1..k+1]]
+
+         -- Assert the subterm equalities
+         mapM_ assert [subterms (stepTime k') | k' <- [0..k]]
+
          stepRefine' candidate
 
        stepRefine' candidate = do
          push 1 p
          let cterm = toTerm candidate (stepTime 0)
+         infoM "Hind.invGen" "Checking candidate (step)"
          infoM "Hind.invGen" (showState candidate)
-         infoM "Hind.invGen" ("Checking candidate (step)\n\t" ++ show cterm)
+         -- infoM "Hind.invGen" ("Checking candidate (step)\n\t" ++ show cterm)
          assert (notTerm cterm)
          ok <- isUnsat p
          if ok
            then do
-             infoM "Hind.invGen" ("Found invariant:\n\t" ++ show cterm)
+             infoM "Hind.invGen" "Found invariant:"
+             infoM "Hind.invGen" (showState candidate)
              pop 1 p
              -- writeChan invChan cterm
              return candidate
@@ -286,23 +299,36 @@ invGenProcess candidateType pool hindFile invChan onError =
              pop 1 p
              stepRefine' (refine candidate model)
 
+       outerloop state k prev = do
+         push 1 p -- Context for base transition assertions
+         (baseCandidate,baseK) <- baseRefine state k
+         pop 1  p -- Close context  for base transition assertions
+         infoM "Hind.invGen" $ "Base process found candidate  " ++
+           show (toTerm baseCandidate (baseTime baseK))
 
-   push 1 p -- Context for base transition assertions
-   (baseCandidate,baseK) <- baseRefine initialState 0
-   pop 1  p -- Close context  for base transition assertions
+         push 1 p -- Context for step transition assertions
+         stepCandidate <- stepRefine baseCandidate baseK
 
-   infoM "Hind.invGen" $ "Base process found candidate  " ++ show (toTerm baseCandidate (baseTime baseK))
-   push 1 p -- Context for step transition assertions
-   stepCandidate <- stepRefine baseCandidate baseK
-   pop 1 p -- Close context for step transition assertions
-   return ()
+         -- An expensive check. Should be done by maintaining a flag,
+         -- either in the candidiate, or else in the refinement
+         -- functions.
+         let same = maybe False (== stepCandidate) prev
+         unless same $ do
+           noticeM "Hind.invGen" $ "Found invariant (" ++ show baseK ++ ")" ++
+             show (toTerm stepCandidate
+                   (Term_qual_identifier (Qual_identifier (Identifier "_M"))))
+
+
+         outerloop baseCandidate (baseK + 1) (Just stepCandidate)
+
+   outerloop initialState 0 Nothing
 
 -- | This works for getting a valuation *from Z3*. The response is
 -- parsed as a get-proof response, for whatever reason. This is a
 -- colossal pain in the ass.
 getValuation p vars time = do
   vals <- sendCommand p (Get_value [Term_qual_identifier_ (Qual_identifier v) [time] | v <- vars])
-  infoM "Hind.invGen" ("Got Model:" ++ show vals)
+  -- infoM "Hind.invGen" ("Got Model:" ++ show vals)
   return (getVals vals)
 
 getVals :: Command_response -> [(Identifier,Term)]
@@ -315,6 +341,13 @@ getVals (Gp_response (S_exprs exprs)) = map val exprs
             Term_spec_constant (Spec_constant_numeral (-x))
         sExprVal s = error $ "sExprVal not defined for " ++ show s
 
+
+-- | Nicer formatting of a counterexample.
+formatModel model = zip (map (snd . head) grouped) (map (map fst) grouped)
+  where sorted = sortBy (\x y -> compare (snd x)  (snd y))  model
+        grouped = groupBy (\x y -> snd x ==  snd y) sorted
+
+-- Junk from earlier implementation
 getAndProcessInv :: a -> b -> c -> d -> e -> IO POVal
 getAndProcessInv _ _ _ _ _ = return NoInv
 assertBaseInvState :: a -> b -> IO ()
@@ -324,9 +357,9 @@ assertStepInvState :: a -> b -> IO ()
 assertStepInvState _ _ = return ()
 assertStepInv :: a -> b -> IO ()
 assertStepInv _ _ = return ()
-
-
 {-
+
+
 -- Invariant Generation
 -- invGenProcess proverCmd model property initPO invChan = forkIO $ do
 invGenProcess' pool hindFile invChan onError = do
@@ -895,3 +928,93 @@ getAndProcessInv p invChan invId onOld onNew = do
       onNew newInv
       return newInv
 -}
+
+deriving instance Eq Term
+deriving instance Eq Spec_constant
+deriving instance Eq Attribute
+deriving instance Eq Qual_identifier
+deriving instance Eq Var_binding
+deriving instance Eq Sorted_var
+deriving instance Eq S_expr
+deriving instance Ord Term
+deriving instance Ord Spec_constant
+deriving instance Ord Attribute
+deriving instance Ord Qual_identifier
+deriving instance Ord Var_binding
+deriving instance Ord Sorted_var
+deriving instance Ord S_expr
+
+
+-- This is code for generating a bunch of definitions for all of the
+-- subterms of a system, so that we have more elements to work with
+-- when generating the candidate invariants.
+gatherTerms sys = (decls  ++ [define],names)
+  where Script cmds = hindScript sys
+        states = hindStates sys
+        locals = hindLocals sys
+        terms = [(ty,n,findTerm n cmds) |
+                 (ty,ns) <- states ++ locals,
+                 n <- ns]
+        subterms = nub $ [(ty,sub) | (ty,_,Just tm) <- terms,
+                          (ty,sub) <- flatten ty tm]
+        subterm i = "_s" ++ show i
+        decls = [Declare_fun (subterm i)
+                 [intType] ty | (ty,_) <- subterms | i <- [0..]]
+        define = Define_fun "___subterms___"
+                 [Sorted_var "_M" intType] boolType
+                 (Term_qual_identifier_ (Qual_identifier (Identifier "and"))
+                  [equalTerm (Term_qual_identifier_
+                              (Qual_identifier (Identifier (subterm i)))
+                              [Term_qual_identifier (Qual_identifier (Identifier "_M"))]) tm
+                  |(_,tm) <- subterms
+                  | i <- [0..]])
+        names = [(ty,Identifier $ subterm i,sub) | (ty,sub) <- subterms | i <- [0..]]
+
+findTerm (Identifier name) = fmap g . find f
+  where f (Define_fun _ [_] sort
+          (Term_qual_identifier_ (Qual_identifier (Identifier "="))
+           [Term_qual_identifier_ (Qual_identifier (Identifier var))
+            [Term_qual_identifier (Qual_identifier (Identifier "_M"))],
+            term])) = var == name
+        f _ = False
+        g (Define_fun _ [_] sort
+          (Term_qual_identifier_ (Qual_identifier (Identifier "="))
+           [Term_qual_identifier_ (Qual_identifier (Identifier var))
+            [Term_qual_identifier (Qual_identifier (Identifier "_M"))],
+            term])) = term
+
+-- subTerms (Define_fun _ [_] sort
+--           (Term_qual_identifier_ (Qual_identifier (Identifier "="))
+--            [Term_qual_identifier_ (Qual_identifier (Identifier var))
+--             [Term_qual_identifier (Qual_identifier (Identifier "_M"))],
+--             term])) = [(var,nub $ flatten term)]
+-- subTerms _ = []
+
+boolType = Sort_bool
+intType = Sort_identifier (Identifier "Int")
+flatten ty tm@(Term_qual_identifier_ (Qual_identifier (Identifier "ite"))
+            [pred,t,e]) = (ty,tm):(boolType,pred):(flatten ty t ++ flatten ty e)
+
+flatten ty tm@(Term_qual_identifier_ (Qual_identifier (Identifier ">="))
+            [x,y]) = (boolType,tm):(flatten intType x ++ flatten intType y)
+flatten ty tm@(Term_qual_identifier_ (Qual_identifier (Identifier "<="))
+            [x,y]) = (boolType,tm):(flatten intType x ++ flatten intType y)
+flatten ty tm@(Term_qual_identifier_ (Qual_identifier (Identifier ">"))
+            [x,y]) = (boolType,tm):(flatten intType x ++ flatten intType y)
+flatten ty tm@(Term_qual_identifier_ (Qual_identifier (Identifier "<"))
+            [x,y]) = (boolType,tm):(flatten intType x ++ flatten intType y)
+
+flatten ty tm@(Term_qual_identifier_ (Qual_identifier (Identifier "+"))
+            [x,y]) = (ty,tm):(flatten ty x ++ flatten ty y)
+flatten ty tm@(Term_qual_identifier_ (Qual_identifier (Identifier "-"))
+            [x,y]) = (ty,tm):(flatten ty x ++ flatten ty y)
+flatten ty tm = [(ty,tm)]
+
+
+mkDefine j term =
+  Define_fun ("def_inv_term_" ++ show j)
+  [Sorted_var "_M" (Sort_identifier (Identifier "Int"))] Sort_bool
+  (Term_qual_identifier_ (Qual_identifier (Identifier "="))
+   [Term_qual_identifier_ (Qual_identifier (Identifier ("inv_term_" ++ show j)))
+    [Term_qual_identifier (Qual_identifier (Identifier "_M"))],
+    term])
