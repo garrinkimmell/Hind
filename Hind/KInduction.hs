@@ -77,6 +77,8 @@ parCheck pool opts hindFile = withTimeout $ do
          (\tids -> return $ tids ++ [("boolInvGen",invGenTID)])
 
 
+    -- This is the main loop that sits waiting for messages from the
+    -- base/step process.
     let loop basePass stepPass = do
           res <- readChan resultChan
           case res of
@@ -171,7 +173,7 @@ baseProcess pool hindFile resultChan invChan onError =
                     (assertBaseInvState p k)
                     (assertBaseInv p k)
 
-          -- send (trans (+ _base k)
+          -- send (trans (0 - k))
           assert (trans' (k-1))
 
           -- send (not (p (k)), check for unsat

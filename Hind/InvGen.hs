@@ -20,7 +20,7 @@ import Control.Monad
 import Control.Concurrent(forkIO,newEmptyMVar,ThreadId)
 import Control.Concurrent.MVar
 
-import Data.List(find, sort,sortBy, groupBy,nub,intersect,(\\))
+import Data.List(intercalate,find, sort,sortBy, groupBy,nub,intersect,(\\))
 import Data.Maybe(fromJust,fromMaybe)
 import System.Log.Logger
 
@@ -68,6 +68,10 @@ class InvGen a where
   refine :: a -> Model -> a
   refine x _ = x
 
+  -- Tracking/Changing whether a candidate has been refined
+  resetRefined :: a -> a
+  isRefined :: a -> Bool
+
 -- | Print out a candidate
 showState c = show ([cls | cls <- classes c, length cls > 1]) ++ "\n" ++
               unlines (map  connect (chains c))
@@ -77,7 +81,7 @@ showState c = show ([cls | cls <- classes c, length cls > 1]) ++ "\n" ++
 -- form (and (= (a time) (b time)) (= (a time) (c time))
 --  (< (a time) (c time)) for the state [[a,b],[c]]
 toTerm st time = and $
-      concatMap eqclass (classes st) ++ map ords (chains st)
+       concatMap eqclass (classes st) ++ map ords (chains st)
     where
       eq = binop (equal st)
       lt = binop (ord st)
@@ -96,22 +100,52 @@ toTerm st time = and $
       true = Term_qual_identifier (Qual_identifier (Identifier "true"))
 
 
+
+toTermMap st termMap time = and $
+       map cleanup $ concatMap eqclass (classes st) ++ map ords (chains st)
+    where
+      eq = binop (equal st)
+      lt = binop (ord st)
+      and [] = true
+      and [a] = a
+      and props = Term_qual_identifier_ (Qual_identifier (Identifier "and")) props
+
+      var x = Term_qual_identifier_ (Qual_identifier x) [time]
+      binop op a b  = Term_qual_identifier_ (Qual_identifier (Identifier op))
+                 [a,b]
+      eqclass [] = []
+      eqclass [c] = []
+      eqclass (c:cs) = [eq (var' c) (var' c') | c' <- cs]
+      -- Create the implication graph for the set of states
+      ords (a,b) = lt (var' a) (var' b)
+      true = Term_qual_identifier (Qual_identifier (Identifier "true"))
+      var' v = case find (isTerm v) termMap of
+        Just (_,_,tm) -> tm
+        Nothing -> var v
+      isTerm v (_,n,_) = v == n
+
+-- Dumb hack to make this easier to read.
+prettierInvariant (Term_qual_identifier_ (Qual_identifier (Identifier "and")) args) =
+  unlines $ map (showLustre . asLustre) args
+
+
+
 -- data BoolInvGen =
 --   BoolInvGen [([Identifier])] [(Identifier,Identifier)] -- Equ. classes, chains.
 
-data BoolInvGen = BoolInvGen [[Identifier]] PO deriving (Eq)
+data BoolInvGen = BoolInvGen [[Identifier]] PO Bool deriving (Eq)
 
 instance InvGen BoolInvGen where
   -- fromStates states = BoolInvGen [states] []
-  fromStates states = BoolInvGen [states] (initialSigma (S.fromList states))
+  fromStates states = BoolInvGen [states] (initialSigma (S.fromList states)) False
 
   typeName _ = Sort_bool
   equal _ = "="
   ord _ = "implies"
 
-  classes (BoolInvGen state _) = state
+  classes (BoolInvGen state _ _) = state
   -- chains (BoolInvGen state cs) = [] -- cs
-  chains (BoolInvGen states po) =
+  chains (BoolInvGen states po _) =
     [(from,to) | (from,tos) <- M.toList red,
                  to <- S.toList tos]
 
@@ -124,7 +158,7 @@ instance InvGen BoolInvGen where
           reps = S.fromList $ map head states
 
 
-  refine candidate@(BoolInvGen states po) model = BoolInvGen states' po'
+  refine candidate@(BoolInvGen states po _) model = BoolInvGen states' po' True
     where model' = map getBool model :: [(Identifier,Bool)]
            -- [(n,v) | (n,Term_spec_constant (Spec_constant_numeral v)) <- model]
           states' = filter (not . null) $ concatMap nextNodes states
@@ -144,16 +178,25 @@ instance InvGen BoolInvGen where
             | otherwise = throw $ ProverException ("Can't get boolean value of " ++ i) []
 
 
-data IntInvGen = IntInvGen [[Identifier]] PO deriving (Eq)
-instance InvGen IntInvGen where
+  resetRefined (BoolInvGen a b _) = BoolInvGen a b False
+  isRefined (BoolInvGen _ _ r) = r
 
-  fromStates states = IntInvGen [states] (initialSigma (S.fromList states))
+data IntInvGen = IntInvGen [[Identifier]] PO Bool
+instance Eq IntInvGen where
+  a == b = (S.fromList (map S.fromList (classes a)) ==
+           S.fromList (map S.fromList (classes b))) &&
+           S.fromList (chains a) == S.fromList (chains b)
+
+
+
+instance InvGen IntInvGen where
+  fromStates states = IntInvGen [states] (initialSigma (S.fromList states)) False
   typeName _ = Sort_identifier (Identifier "Int")
 
   equal _ = "="
   ord _ = "<="
-  classes (IntInvGen states _) = states
-  chains (IntInvGen states po) =
+  classes (IntInvGen states _ _) = states
+  chains (IntInvGen states po _) =
     [(from,to) | (from,tos) <- M.toList red,
                  to <- S.toList tos]
 
@@ -165,7 +208,7 @@ instance InvGen IntInvGen where
             | otherwise = Nothing
           reps = S.fromList $ map head states
 
-  refine candidate@(IntInvGen states po) model = IntInvGen states' po'
+  refine candidate@(IntInvGen states po _ ) model = IntInvGen states' po' True
     where model' =
            [(n,v) | (n,Term_spec_constant (Spec_constant_numeral v)) <- model]
           states' = filter (not . null) $ concatMap nextNodes states
@@ -178,6 +221,8 @@ instance InvGen IntInvGen where
                 grouped = map (map fst) $ groupBy (\a b -> snd a == snd b) sorted
             in grouped
 
+  resetRefined (IntInvGen a b _) = IntInvGen a b False
+  isRefined (IntInvGen _ _ r) = r
 
 
 -- Partial order insertion for traces.
@@ -215,6 +260,8 @@ suc sigma = M.map f sigma
 invGenProcess candidateType pool hindFile invChan onError =
   withProverException pool "Hind.invGen" onError $ \p -> do
    infoM "Hind.invGen" "Started invariant generation"
+
+   -- sendCommand p (Set_option (Produce_unsat_cores True))
    defineSystem hindFile p
 
    -- Subterm handling
@@ -222,11 +269,10 @@ invGenProcess candidateType pool hindFile invChan onError =
        relevant = [n | (ty,n,_) <- names, ty == typeName candidateType]
    mapM_ (sendCommand p) definitions
 
+   let initialState = fromStates relevant  `asTypeOf` candidateType
 
-
-   let initialState = fromStates relevant  `asTypeOf` candidateType -- fromSystem hindFile `asTypeOf` candidateType
-
-   let trans' = trans hindFile
+   let transBase x = trans hindFile (int 0  `minusTerm` int x)
+       transStep = trans hindFile . stepTime
        assert = assertTerm p
        subterms time =
          Term_qual_identifier_ (Qual_identifier (Identifier "___subterms___"))
@@ -236,91 +282,92 @@ invGenProcess candidateType pool hindFile invChan onError =
    -- counterexample. We exit when we get a property
    -- that holds for step k and k+1 without refinement.
    let baseRefine candidate k = do
-         assert (trans' (baseTime k))
-         assert (baseTimeIs k)
+         mapM_ assert [transBase k' | k' <- [0..k]]
+         -- assert (baseTimeIs k)
          -- Assert the subterm equalities.
-         mapM_ assert [subterms (baseTime k') | k' <- [0..k]]
-
+         mapM_ assert [subterms (int 0 `minusTerm` int k') | k' <- [0..k]]
          baseRefine' False candidate k
 
        baseRefine' refined candidate k = do
-
          push 1 p -- Candidate Push
          let cterm = toTerm candidate (baseTime k)
-         debugM "Hind.invGen" ("Checking candidate (base " ++ show k ++ ")")
-         debugM "Hind.invGen" (showState candidate)
+         debugM "Hind.invGen.refineloop.base" ("Checking candidate (base " ++ show k ++ ")")
+         debugM "Hind.invGen.refineloop.base" (showState candidate)
 
          assert $ notTerm (baseTimeIs k `impliesTerm` cterm)
          ok <- isUnsat p
 
          if ok
            then do
-             infoM "Hind.invGen" "Candidate passed."
+             debugM "Hind.invGen.refineloop.base" "Candidate passed."
              pop 1 p -- Candidate Pop
-             if refined
-               then baseRefine candidate (k+1)
-               else return (candidate,k)
+             return (candidate,k)
            else do
              model <- getValuation p (vars candidate) (baseTime k)
              pop 1 p -- Candidate Pop
-             infoM "Hind.invGen" $ "Got counterexample:\n\t" ++ show (formatModel  model)
+             debugM "Hind.invGen.refineloop.base" $
+               "Got counterexample:\n\t" ++ show (formatModel  model)
              let model' = refine candidate model
              baseRefine' True model' k
 
        stepRefine candidate k = do
-
          -- Assert the transition relation
-         mapM_ assert [trans' (stepTime i) | i <- [0..k+1]]
-         -- Assert the candidate for prev.
-         mapM_ assert [toTerm candidate (stepTime i) | i <- [1..k+1]]
-
+         mapM_ assert [transStep i | i <- [0..k]]
          -- Assert the subterm equalities
          mapM_ assert [subterms (stepTime k') | k' <- [0..k]]
+         stepRefine' candidate k
 
-         stepRefine' candidate
+       stepRefine' candidate k = do
+         push 1 p -- candidate push
+         let cterm i = toTerm candidate (stepTime i)
+         debugM "Hind.invGen.refineloop.step" "Checking candidate (step)"
+         debugM "Hind.invGen.refineloop.step" (showState candidate)
 
-       stepRefine' candidate = do
-         push 1 p
-         let cterm = toTerm candidate (stepTime 0)
-         infoM "Hind.invGen" "Checking candidate (step)"
-         infoM "Hind.invGen" (showState candidate)
-         -- infoM "Hind.invGen" ("Checking candidate (step)\n\t" ++ show cterm)
-         assert (notTerm cterm)
+         -- Assert the candidate induction hypotheses
+         mapM_ assert [cterm i | i <- [1..k]]
+         -- Assert the negation of the candidate
+         assert (notTerm (cterm 0))
          ok <- isUnsat p
          if ok
            then do
-             infoM "Hind.invGen" "Found invariant:"
-             infoM "Hind.invGen" (showState candidate)
-             pop 1 p
+             debugM "Hind.invGen.refineloop" "Found invariant:"
+             debugM "Hind.invGen.refineloop" (showState candidate)
+             pop 1 p -- candidate pop
              -- writeChan invChan cterm
              return candidate
            else do
              model <- getValuation p (vars candidate) (stepTime 0)
              pop 1 p
-             stepRefine' (refine candidate model)
+             stepRefine' (refine candidate model) k
 
        outerloop state k prev = do
+         infoM "Hind.invGen.refineloop" $ "Checking for invariant at k " ++ show k
          push 1 p -- Context for base transition assertions
          (baseCandidate,baseK) <- baseRefine state k
          pop 1  p -- Close context  for base transition assertions
-         infoM "Hind.invGen" $ "Base process found candidate  " ++
+
+         debugM "Hind.invGen.refineloop.base" $ "Base process found candidate  " ++
            show (toTerm baseCandidate (baseTime baseK))
 
          push 1 p -- Context for step transition assertions
-         stepCandidate <- stepRefine baseCandidate baseK
+         invariant <- stepRefine (resetRefined baseCandidate) baseK
+         pop 1 p
 
-         -- An expensive check. Should be done by maintaining a flag,
-         -- either in the candidiate, or else in the refinement
-         -- functions.
-         let same = maybe False (== stepCandidate) prev
-         unless same $ do
-           noticeM "Hind.invGen" $ "Found invariant (" ++ show baseK ++ ")" ++
-             show (toTerm stepCandidate
-                   (Term_qual_identifier (Qual_identifier (Identifier "_M"))))
-
-
-         outerloop baseCandidate (baseK + 1) (Just stepCandidate)
-
+         if isRefined invariant
+           then do
+             let same = maybe False (== invariant) prev
+             if same
+               then infoM "Hind.invGen" "Same invariant"
+               else do
+                 noticeM "Hind.invGen" $ "Found invariant (" ++ show baseK ++ ")" ++
+                  prettierInvariant (toTermMap invariant names
+                        (Term_qual_identifier (Qual_identifier (Identifier "_M"))))
+             outerloop (resetRefined baseCandidate) (baseK + 1) (Just invariant)
+           else do
+             -- If we didn't refine the step candidate, then we should
+             -- just quit, because we've proven the baseCandidate
+             -- invariant.
+             noticeM "Hind.invGen.refineloop" "Done with refinement"
    outerloop initialState 0 Nothing
 
 -- | This works for getting a valuation *from Z3*. The response is
@@ -1003,6 +1050,10 @@ flatten ty tm@(Term_qual_identifier_ (Qual_identifier (Identifier ">"))
             [x,y]) = (boolType,tm):(flatten intType x ++ flatten intType y)
 flatten ty tm@(Term_qual_identifier_ (Qual_identifier (Identifier "<"))
             [x,y]) = (boolType,tm):(flatten intType x ++ flatten intType y)
+flatten ty tm@(Term_qual_identifier_ (Qual_identifier (Identifier "and"))
+            [x,y]) = (boolType,tm):(flatten boolType x ++ flatten boolType y)
+flatten ty tm@(Term_qual_identifier_ (Qual_identifier (Identifier "or"))
+            [x,y]) = (boolType,tm):(flatten boolType x ++ flatten boolType y)
 
 flatten ty tm@(Term_qual_identifier_ (Qual_identifier (Identifier "+"))
             [x,y]) = (ty,tm):(flatten ty x ++ flatten ty y)
@@ -1018,3 +1069,72 @@ mkDefine j term =
    [Term_qual_identifier_ (Qual_identifier (Identifier ("inv_term_" ++ show j)))
     [Term_qual_identifier (Qual_identifier (Identifier "_M"))],
     term])
+
+
+--isTrue (Term_qual_identifier (Qual_identifier (Identifier "true"))) = True
+
+-- Make the output more readable...
+cleanup (Term_qual_identifier_ (Qual_identifier (Identifier "=")) [a,b]) =
+            case (cleanup a,cleanup b) of
+              (Term_qual_identifier (Qual_identifier (Identifier "true")),
+               b') -> b'
+              (a',Term_qual_identifier (Qual_identifier (Identifier "true"))) -> a'
+              (a',b') -> (Term_qual_identifier_ (Qual_identifier (Identifier "=")) [a',b'])
+
+cleanup (Term_qual_identifier_ (Qual_identifier (Identifier "and")) (a:bs)) =
+            case (cleanup a,map cleanup bs) of
+               (Term_qual_identifier_ (Qual_identifier (Identifier "and")) args,bs') ->
+                cleanup (Term_qual_identifier_ (Qual_identifier (Identifier "and"))
+                         (args ++ bs'))
+               (a',bs') -> (Term_qual_identifier_ (Qual_identifier (Identifier "and"))
+                            (a':bs'))
+
+cleanup (Term_qual_identifier_ (Qual_identifier (Identifier "or")) (a:bs)) =
+            case (cleanup a,map cleanup bs) of
+               (Term_qual_identifier_ (Qual_identifier (Identifier "or")) args,bs') ->
+                cleanup (Term_qual_identifier_ (Qual_identifier (Identifier "or"))
+                         (args ++ bs'))
+               (a',bs') -> (Term_qual_identifier_ (Qual_identifier (Identifier "or"))
+                           (a':bs'))
+
+cleanup (Term_qual_identifier_ op args) = Term_qual_identifier_ op (map cleanup args)
+
+cleanup t = t
+
+
+-- These two rules give a lustre-like syntax.
+asLustre (Term_qual_identifier_ (Qual_identifier id)
+         [Term_qual_identifier (Qual_identifier (Identifier "_M"))]) =
+  Term_qual_identifier (Qual_identifier id)
+asLustre (Term_qual_identifier_ (Qual_identifier id)
+         [Term_qual_identifier_ (Qual_identifier (Identifier "-"))
+          [Term_qual_identifier (Qual_identifier (Identifier "_M")),
+           Term_spec_constant (Spec_constant_numeral 1)]]) =
+  Term_qual_identifier_ (Qual_identifier (Identifier "pre"))
+    [Term_qual_identifier (Qual_identifier id)]
+
+asLustre (Term_qual_identifier_ (Qual_identifier (Identifier "ite"))
+         [Term_qual_identifier_ (Qual_identifier (Identifier "="))
+          [Term_qual_identifier (Qual_identifier (Identifier "_M")),
+           Term_qual_identifier (Qual_identifier (Identifier "_base"))],
+          t,e]) = Term_qual_identifier_ (Qual_identifier (Identifier "->"))
+                  [asLustre t,asLustre e]
+
+asLustre (Term_qual_identifier_ (Qual_identifier id) args) =
+  (Term_qual_identifier_ (Qual_identifier id) (map asLustre args))
+
+asLustre t = t
+
+
+showLustre t@(Term_qual_identifier_ (Qual_identifier (Identifier "and")) args) =
+  intercalate " and " $ map showLustre args
+
+showLustre t@(Term_qual_identifier_ (Qual_identifier (Identifier "or")) args) =
+  intercalate " or " $ map showLustre args
+
+
+showLustre t@(Term_qual_identifier_ (Qual_identifier (Identifier op)) [a,b])
+  | op `elem` ["implies", "=","+",">=","<=",">","<"] =
+    "(" ++ showLustre a ++ ") " ++ op ++ " ("  ++ showLustre b ++ ")"
+  | otherwise = show t
+showLustre t = show t
