@@ -1141,7 +1141,7 @@ showLustre prec t@(Term_qual_identifier_ (Qual_identifier (Identifier "->")) arg
 showLustre prec t@(Term_qual_identifier_ (Qual_identifier (Identifier op)) [a,b])
   | op `elem` ["implies", "=","+",">=","<=",">","<"] =
     parens prec (getPrec op) $
-      showLustre (getPrec op) a ++ op ++ showLustre (getPrec op) b
+      showLustre (getPrec op) a ++ " " ++ op ++ " " ++ showLustre (getPrec op) b
   | otherwise = show t
 
 showLustre prec t = show t
