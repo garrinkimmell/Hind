@@ -126,7 +126,7 @@ toTermMap st termMap time = and $
 
 -- Dumb hack to make this easier to read.
 prettierInvariant (Term_qual_identifier_ (Qual_identifier (Identifier "and")) args) =
-  unlines $ map (showLustre . asLustre) args
+  unlines $ map (showLustre 0 . asLustre) args
 
 
 
@@ -1126,15 +1126,34 @@ asLustre (Term_qual_identifier_ (Qual_identifier id) args) =
 asLustre t = t
 
 
-showLustre t@(Term_qual_identifier_ (Qual_identifier (Identifier "and")) args) =
-  intercalate " and " $ map showLustre args
+showLustre prec t@(Term_qual_identifier_ (Qual_identifier (Identifier "and")) args) =
+  parens prec (getPrec "and") $
+    intercalate " and " $ map (showLustre (getPrec "and")) args
 
-showLustre t@(Term_qual_identifier_ (Qual_identifier (Identifier "or")) args) =
-  intercalate " or " $ map showLustre args
+showLustre prec t@(Term_qual_identifier_ (Qual_identifier (Identifier "or")) args) =
+  parens prec (getPrec "or") $ intercalate " or " $ map (showLustre prec) args
+
+showLustre prec t@(Term_qual_identifier_ (Qual_identifier (Identifier "->")) args) =
+  parens prec (getPrec "->") $ intercalate " -> " $ map (showLustre prec) args
 
 
-showLustre t@(Term_qual_identifier_ (Qual_identifier (Identifier op)) [a,b])
+
+showLustre prec t@(Term_qual_identifier_ (Qual_identifier (Identifier op)) [a,b])
   | op `elem` ["implies", "=","+",">=","<=",">","<"] =
-    "(" ++ showLustre a ++ ") " ++ op ++ " ("  ++ showLustre b ++ ")"
+    parens prec (getPrec op) $
+      showLustre (getPrec op) a ++ op ++ showLustre (getPrec op) b
   | otherwise = show t
-showLustre t = show t
+
+showLustre prec t = show t
+
+precs = [("implies",5),
+         ("=",5),
+         ("+",4),(">=",4),("<=",4),(">",4),("<",4),
+         ("and",4), ("or",3), ("->",7)
+        ]
+
+getPrec op = fromJust $ lookup op precs
+
+parens parent child term
+  | child > parent = term
+  | otherwise = "(" ++ term ++ ")"
