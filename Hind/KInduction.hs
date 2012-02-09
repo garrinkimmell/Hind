@@ -198,7 +198,7 @@ baseProcess pool hindFile resultChan invariant onError =
                writeChan resultChan (BasePass k)
                loop (k+1) invId'
             else do
-               infoM "Hind.baseProcess" $ "Passed for step " ++ show k
+               noticeM "Hind.baseProcess" $ "Failed for step " ++ show k
                writeChan resultChan (BaseFail k)
     _ <- isUnsat p
     loop 1 invariant
@@ -259,7 +259,7 @@ stepProcess pool hindFile pathCompress resultChan invariant onError =
           res <- isUnsat p
           if res
             then do
-              infoM "Hind.stepProcess" $ "Passed for step " ++ show k
+              noticeM "Hind.stepProcess" $ "Passed for step " ++ show k
               writeChan resultChan (StepPass k)
             else do
                  infoM "Hind.stepProcess" $ "Failed for step " ++ show k
