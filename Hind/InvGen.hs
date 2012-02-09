@@ -28,7 +28,7 @@ import System.Log.Logger
 import qualified Data.Map as M
 import qualified Data.Set as S
 
-data POVal = NoInv
+-- data POVal = NoInv
 
 type Model = [(Identifier,Term)]
 
@@ -100,7 +100,8 @@ toTerm st time = and $
       true = Term_qual_identifier (Qual_identifier (Identifier "true"))
 
 
-
+-- Create a term, but change the subterm uninterpreted functions into
+-- their corresponding definitions
 toTermMap st termMap time = and $
        map cleanup $ concatMap eqclass (classes st) ++ map ords (chains st)
     where
@@ -123,6 +124,19 @@ toTermMap st termMap time = and $
         Just (_,_,tm) -> tm
         Nothing -> var v
       isTerm v (_,n,_) = v == n
+
+
+mkDef st termMap prevIdx =
+  Define_fun (invName (idx+1))
+    [Sorted_var "_M" intType] boolType augmented
+  where body = toTermMap st termMap (Term_qual_identifier (Qual_identifier (Identifier "_M")))
+        augmented
+          | Just i <- prevIdx =
+            binop "and" (Term_qual_identifier (Qual_identifier (Identifier (invName i))))
+                         body
+          | otherwise = body
+        invName i = "___inv_"++show i
+        idx = maybe 0 (+1) prevIdx
 
 -- Dumb hack to make this easier to read.
 prettierInvariant (Term_qual_identifier_ (Qual_identifier (Identifier "and")) args) =
@@ -257,7 +271,7 @@ suc sigma = M.map f sigma
 
 -- invGenProcess :: InvGen a => a -> ConnectionPool -> HindFile -> Chan Term ->
 --                   (ProverException -> IO ()) -> IO (ThreadId, IO ())
-invGenProcess candidateType pool hindFile invChan onError =
+invGenProcess candidateType pool pathcompress hindFile invChan onError =
   withProverException pool "Hind.invGen" onError $ \p -> do
    infoM "Hind.invGen" "Started invariant generation"
 
@@ -305,6 +319,7 @@ invGenProcess candidateType pool hindFile invChan onError =
            else do
              model <- getValuation p (vars candidate) (baseTime k)
              pop 1 p -- Candidate Pop
+             debugM "Hind.invGen.refineloop.base" "Refined Candidate"
              debugM "Hind.invGen.refineloop.base" $
                "Got counterexample:\n\t" ++ show (formatModel  model)
              let model' = refine candidate model
@@ -315,6 +330,11 @@ invGenProcess candidateType pool hindFile invChan onError =
          mapM_ assert [transStep i | i <- [0..k]]
          -- Assert the subterm equalities
          mapM_ assert [subterms (stepTime k') | k' <- [0..k]]
+         -- Assert path compression
+         when pathcompress $
+           mapM_ (sendCommand p) [stateCharacteristic k' | k' <- [0..k]]
+
+
          stepRefine' candidate k
 
        stepRefine' candidate k = do
@@ -338,10 +358,11 @@ invGenProcess candidateType pool hindFile invChan onError =
            else do
              model <- getValuation p (vars candidate) (stepTime 0)
              pop 1 p
+             debugM "Hind.invGen.refineloop.step" "Refined Candidate"
              stepRefine' (refine candidate model) k
 
        outerloop state k prev = do
-         infoM "Hind.invGen.refineloop" $ "Checking for invariant at k " ++ show k
+         debugM "Hind.invGen.refineloop" $ "Checking for invariant at k " ++ show k
          push 1 p -- Context for base transition assertions
          (baseCandidate,baseK) <- baseRefine state k
          pop 1  p -- Close context  for base transition assertions
@@ -353,21 +374,25 @@ invGenProcess candidateType pool hindFile invChan onError =
          invariant <- stepRefine (resetRefined baseCandidate) baseK
          pop 1 p
 
+         let same = maybe False (== invariant) prev
+         if same
+           then debugM "Hind.invGen" "Same invariant"
+           else do
+           infoM "Hind.invGen" $ "Found invariant (" ++ show baseK ++ ")"
+           debugM "Hind.invGen" $ show $ mkDef invariant names (Just k)
+           writeChan invChan (toTermMap invariant names)
+
+
+
          if isRefined invariant
            then do
-             let same = maybe False (== invariant) prev
-             if same
-               then infoM "Hind.invGen" "Same invariant"
-               else do
-                 noticeM "Hind.invGen" $ "Found invariant (" ++ show baseK ++ ")" ++
-                  prettierInvariant (toTermMap invariant names
-                        (Term_qual_identifier (Qual_identifier (Identifier "_M"))))
              outerloop (resetRefined baseCandidate) (baseK + 1) (Just invariant)
            else do
              -- If we didn't refine the step candidate, then we should
              -- just quit, because we've proven the baseCandidate
              -- invariant.
-             noticeM "Hind.invGen.refineloop" "Done with refinement"
+             noticeM "Hind.invGen.refineloop" $
+                "Done with " ++ show (typeName invariant) ++  " refinement."
    outerloop initialState 0 Nothing
 
 -- | This works for getting a valuation *from Z3*. The response is
@@ -395,15 +420,15 @@ formatModel model = zip (map (snd . head) grouped) (map (map fst) grouped)
         grouped = groupBy (\x y -> snd x ==  snd y) sorted
 
 -- Junk from earlier implementation
-getAndProcessInv :: a -> b -> c -> d -> e -> IO POVal
-getAndProcessInv _ _ _ _ _ = return NoInv
-assertBaseInvState :: a -> b -> IO ()
-assertBaseInvState _ _ = return ()
-assertBaseInv _ = return ()
-assertStepInvState :: a -> b -> IO ()
-assertStepInvState _ _ = return ()
-assertStepInv :: a -> b -> IO ()
-assertStepInv _ _ = return ()
+-- getAndProcessInv :: a -> b -> c -> d -> e -> IO POVal
+-- getAndProcessInv _ _ _ _ _ = return NoInv
+-- assertBaseInvState :: a -> b -> IO ()
+-- assertBaseInvState _ _ = return ()
+-- assertBaseInv _ = return ()
+-- assertStepInvState :: a -> b -> IO ()
+-- assertStepInvState _ _ = return ()
+-- assertStepInv :: a -> b -> IO ()
+-- assertStepInv _ _ = return ()
 {-
 
 
@@ -905,7 +930,6 @@ addInvFormula i term =
      [Term_qual_identifier (Qual_identifier (Identifier "step"))],
      term]
 
-
 -- | Try to read a new invariant. In the case that there is one available,
 -- generate a new definition and return the name of the new invariant.
 -- TODO: This should really continue to read and build new invariants as long
@@ -975,6 +999,53 @@ getAndProcessInv p invChan invId onOld onNew = do
       onNew newInv
       return newInv
 -}
+
+
+type InvFun = Term->Term
+data Invariant = NoInvariant (Chan InvFun)
+               | Inv Int InvFun (Chan InvFun)
+
+getInvariant (NoInvariant c) = do
+  empty <- isEmptyChan c
+  if empty
+    then return (False,NoInvariant c)
+    else do
+    fun <- readChan c
+    return (True, Inv 0 fun c)
+getInvariant inv@(Inv i def c) = do
+  empty <- isEmptyChan c
+  if empty
+    then return (False,inv)
+    else do
+    fun <- readChan c
+    return (True, Inv (i+1) fun c)
+
+
+
+defineInvariant p (NoInvariant _) = return ()
+defineInvariant p (Inv i fun _) = do
+  -- Create the define-fun
+  sendCommand p def
+  return ()
+
+  where def = Define_fun (invName i)
+               [Sorted_var "_M" intType] boolType augmented
+        body = fun m
+        augmented
+          | i > 0 =
+            binop "and"
+              (Term_qual_identifier_ (Qual_identifier (Identifier (invName (i-1)))) [m])
+              body
+          | otherwise = body
+        m = Term_qual_identifier (Qual_identifier (Identifier "_M"))
+invName i = "___inv_"++show i
+
+assertInvariant p (NoInvariant _) time = return ()
+assertInvariant p (Inv i _ _) time = do
+  sendCommand p
+    (Assert (Term_qual_identifier_ (Qual_identifier (Identifier (invName i))) [time]))
+  return ()
+
 
 deriving instance Eq Term
 deriving instance Eq Spec_constant
@@ -1137,9 +1208,8 @@ showLustre prec t@(Term_qual_identifier_ (Qual_identifier (Identifier "->")) arg
   parens prec (getPrec "->") $ intercalate " -> " $ map (showLustre prec) args
 
 
-
 showLustre prec t@(Term_qual_identifier_ (Qual_identifier (Identifier op)) [a,b])
-  | op `elem` ["implies", "=","+",">=","<=",">","<"] =
+  | op `elem` ["implies", "=","+",">=","<=",">","<","->"] =
     parens prec (getPrec op) $
       showLustre (getPrec op) a ++ " " ++ op ++ " " ++ showLustre (getPrec op) b
   | otherwise = show t
@@ -1147,9 +1217,9 @@ showLustre prec t@(Term_qual_identifier_ (Qual_identifier (Identifier op)) [a,b]
 showLustre prec t = show t
 
 precs = [("implies",5),
-         ("=",5),
-         ("+",4),(">=",4),("<=",4),(">",4),("<",4),
-         ("and",4), ("or",3), ("->",7)
+         ("-",5),("+",5),
+         ("=",4),(">=",4),("<=",4),(">",4),("<",4),
+         ("and",4), ("or",3), ("->",3)
         ]
 
 getPrec op = fromJust $ lookup op precs

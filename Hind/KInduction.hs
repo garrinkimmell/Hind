@@ -60,19 +60,20 @@ parCheck pool opts hindFile = withTimeout $ do
         errAction = \e -> throwTo tid e
 
     -- First start the main proof process
-    baseProc <- baseProcess pool hindFile' resultChan invChanBase errAction
-    stepProc <- stepProcess pool hindFile' (pathCompression opts) resultChan invChanStep errAction
+    baseProc <- baseProcess pool hindFile' resultChan (NoInvariant invChanBase) errAction
+    stepProc <- stepProcess pool hindFile' (pathCompression opts)
+                  resultChan (NoInvariant invChanStep) errAction
     modifyMVar_ children (\tids -> return $ tids ++ [("base",baseProc),("step",stepProc)])
 
     when (Opts.intInvGen opts) $ do
       -- Now kick off the invariant generation process
-      invGenTID <- invGenProcess (undefined :: IntInvGen) pool hindFile' invChan errAction
+      invGenTID <- invGenProcess (undefined :: IntInvGen) pool (pathCompression opts) hindFile' invChan errAction
       modifyMVar_ children
         (\tids -> return $ tids ++ [("intInvGen",invGenTID)])
 
     when (Opts.boolInvGen opts) $ do
       -- Now kick off the invariant generation process
-      invGenTID <- invGenProcess (undefined :: BoolInvGen) pool hindFile' invChan errAction
+      invGenTID <- invGenProcess (undefined :: BoolInvGen) pool (pathCompression opts) hindFile' invChan errAction
       modifyMVar_ children
          (\tids -> return $ tids ++ [("boolInvGen",invGenTID)])
 
@@ -153,10 +154,10 @@ data ProverResult = BasePass Integer | BaseFail Integer | StepPass Integer | Ste
 
 
 baseProcess
-  :: ConnectionPool -> HindFile -> Chan ProverResult -> Chan POVal ->
+  :: ConnectionPool -> HindFile -> Chan ProverResult -> Invariant ->
      (ProverException -> IO ()) ->
      IO (ThreadId, IO ())
-baseProcess pool hindFile resultChan invChan onError =
+baseProcess pool hindFile resultChan invariant onError =
   withProverException pool "Hind.baseProcess" onError $  \p -> do
     -- infoM "Hind.baseProcess" "Base Prover Started"
     -- _ <- mapM (sendCommand p) model
@@ -168,10 +169,12 @@ baseProcess pool hindFile resultChan invChan onError =
         assert = assertTerm p
 
     let loop k invId = do
-          -- checkInvariant p invChan
-          invId' <- getAndProcessInv p invChan invId
-                    (assertBaseInvState p k)
-                    (assertBaseInv p k)
+          (new,invId') <- getInvariant invId
+          when new $ do
+            infoM "Hind.stepProcess" "Got a new invariant"
+            defineInvariant p invId'
+            sequence_ [assertInvariant p invId' (stepTime i) | i <- [0..k]]
+
 
           -- send (trans (0 - k))
           assert (trans' (k-1))
@@ -198,13 +201,13 @@ baseProcess pool hindFile resultChan invChan onError =
                infoM "Hind.baseProcess" $ "Passed for step " ++ show k
                writeChan resultChan (BaseFail k)
     _ <- isUnsat p
-    loop 1 NoInv
+    loop 1 invariant
 
 stepProcess ::
-  ConnectionPool -> HindFile -> Bool -> Chan ProverResult -> Chan POVal ->
+  ConnectionPool -> HindFile -> Bool -> Chan ProverResult -> Invariant ->
   (ProverException -> IO ()) ->
   IO (ThreadId,IO ())
-stepProcess pool hindFile pathCompress resultChan invChan onError =
+stepProcess pool hindFile pathCompress resultChan invariant onError =
   withProverException pool "Hind.stepProcess" onError $  \p -> do
     when pathCompress $ do
       sendCommand p (Set_option (Produce_unsat_cores True)) >> return ()
@@ -229,10 +232,11 @@ stepProcess pool hindFile pathCompress resultChan invChan onError =
     when pathCompress $ sendCommand p (stateCharacteristic 0) >> return ()
 
     let loop k invId = do
-          -- Add any additional invariants.
-          invId' <- getAndProcessInv p invChan invId
-                    (assertStepInvState p k)
-                    (assertStepInv p k)
+          (new,invId') <- getInvariant invId
+          when new $ do
+            infoM "Hind.stepProcess" "Got a new invariant"
+            defineInvariant p invId'
+            sequence_ [assertInvariant p invId' (stepTime i) | i <- [0..k]]
 
 
           -- Send '(trans (n-k+1)'
@@ -261,7 +265,7 @@ stepProcess pool hindFile pathCompress resultChan invChan onError =
                  infoM "Hind.stepProcess" $ "Failed for step " ++ show k
                  writeChan resultChan (StepFail k)
                  loop (k+1) invId'
-    loop 1 NoInv
+    loop 1 invariant
 
 
 
