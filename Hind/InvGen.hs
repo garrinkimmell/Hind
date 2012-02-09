@@ -72,6 +72,7 @@ class InvGen a where
   resetRefined :: a -> a
   isRefined :: a -> Bool
 
+
 -- | Print out a candidate
 showState c = show ([cls | cls <- classes c, length cls > 1]) ++ "\n" ++
               unlines (map  connect (chains c))
@@ -148,6 +149,8 @@ prettierInvariant (Term_qual_identifier_ (Qual_identifier (Identifier "and")) ar
 --   BoolInvGen [([Identifier])] [(Identifier,Identifier)] -- Equ. classes, chains.
 
 data BoolInvGen = BoolInvGen [[Identifier]] PO Bool deriving (Eq)
+instance Show BoolInvGen where
+  show = showState
 
 instance InvGen BoolInvGen where
   fromStates states = BoolInvGen [states] (initialSigma (S.fromList states)) False
@@ -200,6 +203,8 @@ instance Eq IntInvGen where
            S.fromList (map S.fromList (classes b))) &&
            S.fromList (chains a) == S.fromList (chains b)
 
+instance Show IntInvGen where
+  show = showState
 
 
 instance InvGen IntInvGen where
