@@ -7,6 +7,7 @@ import Data.Maybe
 import "monads-fd" Control.Monad.Error
 import Control.Exception
 import Data.Typeable
+import GHC.Exts(the,groupWith)
 
 
 data HindFile = HindFile { hindProperties :: [Identifier]
@@ -49,10 +50,9 @@ processScript scr@(Script cmds) = do
   inputs <- getInputs cmds
   outputs <- getOutputs cmds
   coverage <- getCoverage cmds
-  let groupedStates = [(head ty,n)  | (ty,n) <- states,
-                       then group by ty]
-  let groupedLocals = [(head ty,n)  | (ty,n) <- locals,
-                         then group by ty]
+  let groupedStates = [(head ty,n)  | (ty,n) <- states, then group by ty using groupWith ]
+  let groupedLocals = [(head ty,n)  | (ty,n) <- locals, then group by ty using groupWith ]
+
 
   return $
          HindFile properties inputs outputs groupedStates groupedLocals trans coverage
