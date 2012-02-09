@@ -13,7 +13,7 @@ import Hind.Utils
 
 import Language.SMTLIB
 
-import qualified Data.Set as S
+
 import Control.Applicative
 import Control.Exception
 import Control.Monad
@@ -25,24 +25,29 @@ import Data.Maybe(fromJust,fromMaybe)
 import System.Log.Logger
 
 
-import qualified Data.Map as M
-import qualified Data.Set as S
+-- import qualified Data.Map as M
+-- import qualified Data.Set as S
+-- import Data.Set(Set)
+-- import Data.Map(Map)
+import qualified Data.IntSet as S
+import qualified Data.IntMap as M
+type Map a b = M.IntMap b
+type Set a = S.IntSet
 
--- data POVal = NoInv
 
-type Model = [(Identifier,Term)]
+type Model = [(Int,Term)]
 
 class InvGen a where
   -- | Construct a candidate from a system description
-  fromSystem :: HindFile -> a
-  fromSystem sys
-     = let states = fromMaybe [] $ lookup (typeName (undefined :: a)) (hindStates sys)
-           locals = fromMaybe [] $ lookup (typeName (undefined :: a)) (hindLocals sys)
-       in fromStates (states ++ locals)
+  -- fromSystem :: HindFile -> a
+  -- fromSystem sys
+  --    = let states = fromMaybe [] $ lookup (typeName (undefined :: a)) (hindStates sys)
+  --          locals = fromMaybe [] $ lookup (typeName (undefined :: a)) (hindLocals sys)
+  --      in fromStates (states ++ locals)
 
 
   -- | Construct a candidate given a list of states
-  fromStates :: [Identifier] -> a
+  fromStates :: [Int] -> a
 
   -- | Return the name of this type as an SMT identifier
   typeName :: a -> Sort
@@ -54,15 +59,15 @@ class InvGen a where
   ord :: a -> String
 
   -- | Return a list of all of the state variables
-  vars :: a -> [Identifier]
+  vars :: a -> [Int]
   vars x = concat $ classes x
 
   -- | Return the partition
-  classes :: a -> [[Identifier]]
+  classes :: a -> [[Int]]
 
   -- | Return the ordered chains. These aren't actually chains,
   -- they're just ordered pairs. FIXME: rename this.
-  chains :: a -> [(Identifier,Identifier)]
+  chains :: a -> [(Int,Int)]
 
   -- Given a model, refine the candidate.
   refine :: a -> Model -> a
@@ -78,6 +83,7 @@ showState c = show ([cls | cls <- classes c, length cls > 1]) ++ "\n" ++
               unlines (map  connect (chains c))
   where connect (a,b) = show a ++  ord c ++ show b
 
+
 -- | Generate a term representing the candidate. It will have the
 -- form (and (= (a time) (b time)) (= (a time) (c time))
 --  (< (a time) (c time)) for the state [[a,b],[c]]
@@ -90,7 +96,7 @@ toTerm st time = and $
       and [a] = a
       and props = Term_qual_identifier_ (Qual_identifier (Identifier "and")) props
 
-      var x = Term_qual_identifier_ (Qual_identifier x) [time]
+      var x = Term_qual_identifier_ (Qual_identifier (Identifier (subterm x))) [time]
       binop op a b  = Term_qual_identifier_ (Qual_identifier (Identifier op))
                  [a,b]
       eqclass [] = []
@@ -112,7 +118,8 @@ toTermMap st termMap time = and $
       and [a] = a
       and props = Term_qual_identifier_ (Qual_identifier (Identifier "and")) props
 
-      var x = Term_qual_identifier_ (Qual_identifier x) [time]
+
+      var x = Term_qual_identifier_ (Qual_identifier (Identifier (subterm x))) [time]
       binop op a b  = Term_qual_identifier_ (Qual_identifier (Identifier op))
                  [a,b]
       eqclass [] = []
@@ -139,16 +146,9 @@ mkDef st termMap prevIdx =
         invName i = "___inv_"++show i
         idx = maybe 0 (+1) prevIdx
 
--- Dumb hack to make this easier to read.
-prettierInvariant (Term_qual_identifier_ (Qual_identifier (Identifier "and")) args) =
-  unlines $ map (showLustre 0 . asLustre) args
 
 
-
--- data BoolInvGen =
---   BoolInvGen [([Identifier])] [(Identifier,Identifier)] -- Equ. classes, chains.
-
-data BoolInvGen = BoolInvGen [[Identifier]] PO Bool deriving (Eq)
+data BoolInvGen = BoolInvGen [[Int]] PO Bool deriving (Eq)
 instance Show BoolInvGen where
   show = showState
 
@@ -160,7 +160,7 @@ instance InvGen BoolInvGen where
   ord _ = "implies"
 
   classes (BoolInvGen state _ _) = state
-  -- chains (BoolInvGen state cs) = [] -- cs
+
   chains (BoolInvGen states po _) =
     [(from,to) | (from,tos) <- M.toList red,
                  to <- S.toList tos]
@@ -175,7 +175,7 @@ instance InvGen BoolInvGen where
 
 
   refine candidate@(BoolInvGen states po _) model = BoolInvGen states' po' True
-    where model' = map getBool model :: [(Identifier,Bool)]
+    where model' = map getBool model :: [(Int,Bool)]
            -- [(n,v) | (n,Term_spec_constant (Spec_constant_numeral v)) <- model]
           states' = filter (not . null) $ concatMap nextNodes states
           po' = nextSigma po model'
@@ -197,11 +197,13 @@ instance InvGen BoolInvGen where
   resetRefined (BoolInvGen a b _) = BoolInvGen a b False
   isRefined (BoolInvGen _ _ r) = r
 
-data IntInvGen = IntInvGen [[Identifier]] PO Bool
+data IntInvGen = IntInvGen [[Int]] PO Bool
+
 instance Eq IntInvGen where
-  a == b = (S.fromList (map S.fromList (classes a)) ==
-           S.fromList (map S.fromList (classes b))) &&
-           S.fromList (chains a) == S.fromList (chains b)
+  -- a == b = (S.fromList (map S.fromList (classes a)) ==
+  --          S.fromList (map S.fromList (classes b))) &&
+  --          S.fromList (chains a) == S.fromList (chains b)
+  a == b = classes a == classes b && chains a == chains b
 
 instance Show IntInvGen where
   show = showState
@@ -248,11 +250,15 @@ instance InvGen IntInvGen where
 -- nodes. Note this representation gives uses irreflexive, transitive
 -- closure of the partial order.
 --
-type PO = M.Map Identifier (S.Set Identifier)
+-- type PO = Map Identifier (Set Identifier)
+type PO = M.IntMap S.IntSet
+
 
 -- | FIXME: Dont' use list comprehensions, use map/fold directly on
 -- sets and maps.
 initialSigma s = M.fromList [(k,S.delete k s) | k <- S.toList s]
+
+
 nextSigma sig vals = M.mapWithKey f sig
   where f k v = S.filter (cmp k) v
         cmp a b = let Just av = lookup a vals
@@ -260,21 +266,20 @@ nextSigma sig vals = M.mapWithKey f sig
                   in av <= bv
 
 -- i,j,k are Testing
-i = initialSigma (S.fromList ["a","b","c","d"])
-j = nextSigma i [("a",0),("b",1),("c",2),("d",3)]
-k = nextSigma j [("a",0),("b",2),("c",1),("d",3)]
+-- i = initialSigma (S.fromList ["a","b","c","d"])
+-- j = nextSigma i [("a",0),("b",1),("c",2),("d",3)]
+-- k = nextSigma j [("a",0),("b",2),("c",1),("d",3)]
 
 -- Calculate the transitive reduction of a PO structure. It's
 -- critical that the graph be acyclic.
 suc sigma = M.map f sigma
   where f v = v S.\\ getAll v
-        getAll vals = S.unions $ S.toList $
-                      S.map (\k -> M.findWithDefault S.empty k sigma) vals
+        getAll vals = S.unions $
+                      map (\k -> M.findWithDefault S.empty k sigma) (S.elems vals)
 
 
 
--- invGenProcess :: InvGen a => a -> ConnectionPool -> HindFile -> Chan Term ->
---                   (ProverException -> IO ()) -> IO (ThreadId, IO ())
+
 invGenProcess candidateType pool pathcompress hindFile invChan onError =
   withProverException pool "Hind.invGen" onError $ \p -> do
    infoM "Hind.invGen" "Started invariant generation"
@@ -400,23 +405,30 @@ invGenProcess candidateType pool pathcompress hindFile invChan onError =
                 "Done with " ++ show (typeName invariant) ++  " refinement."
    outerloop initialState 0 Nothing
 
+
 -- | This works for getting a valuation *from Z3*. The response is
 -- parsed as a get-proof response, for whatever reason. This is a
 -- colossal pain in the ass.
 getValuation p vars time = do
-  vals <- sendCommand p (Get_value [Term_qual_identifier_ (Qual_identifier v) [time] | v <- vars])
+  vals <- sendCommand p
+          (Get_value [Term_qual_identifier_ (Qual_identifier (Identifier (subterm v))) [time]
+                     | v <- vars])
   -- infoM "Hind.invGen" ("Got Model:" ++ show vals)
   return (getVals vals)
 
-getVals :: Command_response -> [(Identifier,Term)]
-getVals (Gv_response vals) = [(n,val) | (Term_qual_identifier_ (Qual_identifier  n) _, val) <- vals]
+
+getVals :: Command_response -> [(Int,Term)]
+getVals (Gv_response vals) =
+  [(unsubterm n,val) |
+   (Term_qual_identifier_ (Qual_identifier (Identifier n)) _, val) <- vals]
 getVals (Gp_response (S_exprs exprs)) = map val exprs
-  where val (S_exprs [S_exprs [S_expr_symbol n,time],val]) = (Identifier n,sExprVal val)
+  where val (S_exprs [S_exprs [S_expr_symbol n,time],val]) = (unsubterm n,sExprVal val)
         sExprVal (S_expr_constant c) = Term_spec_constant c
         sExprVal (S_expr_symbol s) = Term_qual_identifier (Qual_identifier (Identifier s))
         sExprVal (S_exprs [S_expr_symbol "-", S_expr_constant (Spec_constant_numeral x)]) =
             Term_spec_constant (Spec_constant_numeral (-x))
         sExprVal s = error $ "sExprVal not defined for " ++ show s
+
 
 -- | Nicer formatting of a counterexample.
 formatModel model = zip (map (snd . head) grouped) (map (map fst) grouped)
@@ -485,6 +497,9 @@ deriving instance Ord Var_binding
 deriving instance Ord Sorted_var
 deriving instance Ord S_expr
 
+-- This is the common prefix for a subterm name.
+subterm i = "_s" ++ show i
+unsubterm s = read (drop 2 s)
 
 -- This is code for generating a bunch of definitions for all of the
 -- subterms of a system, so that we have more elements to work with
@@ -498,7 +513,7 @@ gatherTerms sys = (decls  ++ [define],names)
                  n <- ns]
         subterms = nub $ [(ty,sub) | (ty,_,Just tm) <- terms,
                           (ty,sub) <- flatten ty tm]
-        subterm i = "_s" ++ show i
+
         decls = [Declare_fun (subterm i)
                  [intType] ty | (ty,_) <- subterms | i <- [0..]]
         define = Define_fun "___subterms___"
@@ -509,7 +524,7 @@ gatherTerms sys = (decls  ++ [define],names)
                               [Term_qual_identifier (Qual_identifier (Identifier "_M"))]) tm
                   |(_,tm) <- subterms
                   | i <- [0..]])
-        names = [(ty,Identifier $ subterm i,sub) | (ty,sub) <- subterms | i <- [0..]]
+        names = [(ty,i,sub) | (ty,sub) <- subterms | i <- [0..]]
 
 findTerm (Identifier name) = fmap g . find f
   where f (Define_fun _ [_] sort
@@ -524,15 +539,9 @@ findTerm (Identifier name) = fmap g . find f
             [Term_qual_identifier (Qual_identifier (Identifier "_M"))],
             term])) = term
 
--- subTerms (Define_fun _ [_] sort
---           (Term_qual_identifier_ (Qual_identifier (Identifier "="))
---            [Term_qual_identifier_ (Qual_identifier (Identifier var))
---             [Term_qual_identifier (Qual_identifier (Identifier "_M"))],
---             term])) = [(var,nub $ flatten term)]
--- subTerms _ = []
-
 boolType = Sort_bool
 intType = Sort_identifier (Identifier "Int")
+
 flatten ty tm@(Term_qual_identifier_ (Qual_identifier (Identifier "ite"))
             [pred,t,e]) = (ty,tm):(boolType,pred):(flatten ty t ++ flatten ty e)
 
@@ -564,7 +573,6 @@ mkDefine j term =
     [Term_qual_identifier (Qual_identifier (Identifier "_M"))],
     term])
 
---isTrue (Term_qual_identifier (Qual_identifier (Identifier "true"))) = True
 
 -- Make the output more readable...
 cleanup (Term_qual_identifier_ (Qual_identifier (Identifier "=")) [a,b]) =
@@ -593,59 +601,3 @@ cleanup (Term_qual_identifier_ (Qual_identifier (Identifier "or")) (a:bs)) =
 cleanup (Term_qual_identifier_ op args) = Term_qual_identifier_ op (map cleanup args)
 
 cleanup t = t
-
-
--- These two rules give a lustre-like syntax.
-asLustre (Term_qual_identifier_ (Qual_identifier id)
-         [Term_qual_identifier (Qual_identifier (Identifier "_M"))]) =
-  Term_qual_identifier (Qual_identifier id)
-asLustre (Term_qual_identifier_ (Qual_identifier id)
-         [Term_qual_identifier_ (Qual_identifier (Identifier "-"))
-          [Term_qual_identifier (Qual_identifier (Identifier "_M")),
-           Term_spec_constant (Spec_constant_numeral 1)]]) =
-  Term_qual_identifier_ (Qual_identifier (Identifier "pre"))
-    [Term_qual_identifier (Qual_identifier id)]
-
-asLustre (Term_qual_identifier_ (Qual_identifier (Identifier "ite"))
-         [Term_qual_identifier_ (Qual_identifier (Identifier "="))
-          [Term_qual_identifier (Qual_identifier (Identifier "_M")),
-           Term_qual_identifier (Qual_identifier (Identifier "_base"))],
-          t,e]) = Term_qual_identifier_ (Qual_identifier (Identifier "->"))
-                  [asLustre t,asLustre e]
-
-asLustre (Term_qual_identifier_ (Qual_identifier id) args) =
-  (Term_qual_identifier_ (Qual_identifier id) (map asLustre args))
-
-asLustre t = t
-
-
-showLustre prec t@(Term_qual_identifier_ (Qual_identifier (Identifier "and")) args) =
-  parens prec (getPrec "and") $
-    intercalate " and " $ map (showLustre (getPrec "and")) args
-
-showLustre prec t@(Term_qual_identifier_ (Qual_identifier (Identifier "or")) args) =
-  parens prec (getPrec "or") $ intercalate " or " $ map (showLustre prec) args
-
-showLustre prec t@(Term_qual_identifier_ (Qual_identifier (Identifier "->")) args) =
-  parens prec (getPrec "->") $ intercalate " -> " $ map (showLustre prec) args
-
-
-showLustre prec t@(Term_qual_identifier_ (Qual_identifier (Identifier op)) [a,b])
-  | op `elem` ["implies", "=","+",">=","<=",">","<","->"] =
-    parens prec (getPrec op) $
-      showLustre (getPrec op) a ++ " " ++ op ++ " " ++ showLustre (getPrec op) b
-  | otherwise = show t
-
-showLustre prec t = show t
-
-precs = [("implies",5),
-         ("-",5),("+",5),
-         ("=",4),(">=",4),("<=",4),(">",4),("<",4),
-         ("and",4), ("or",3), ("->",3)
-        ]
-
-getPrec op = fromJust $ lookup op precs
-
-parens parent child term
-  | child > parent = term
-  | otherwise = "(" ++ term ++ ")"
