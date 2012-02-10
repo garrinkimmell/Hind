@@ -21,6 +21,7 @@ import Control.Concurrent
    newEmptyMVar, putMVar, takeMVar,swapMVar,myThreadId)
 import Data.List(sortBy, groupBy)
 import System.Log.Logger
+import System.IO(hPutStrLn,hClose,openFile,IOMode(WriteMode))
 import qualified System.Timeout as TO
 import Prelude hiding (catch)
 
@@ -37,8 +38,14 @@ parCheck pool opts hindFile = withTimeout $ do
     let withPathCompression = if pathCompression opts then addPathCompression withPrelude else withPrelude
 
 
+    -- Set up what to do if the prover raises an exception
+    tid <- myThreadId
+    let errAction :: ProverException -> IO ()
+        errAction = \e -> throwTo tid e
+
+
+
     let hindFile' = withPathCompression
-    -- let hindFile' = addPathCompression hindFile
 
     -- We track the fork  threads, so we can kill them.
     children <- newMVar []
@@ -53,29 +60,42 @@ parCheck pool opts hindFile = withTimeout $ do
     invChanBase <- dupChan invChan
     invChanStep <- dupChan invChan
 
-
-    -- Set up what to do if the prover raises an exception
-    tid <- myThreadId
-    let errAction :: ProverException -> IO ()
-        errAction = \e -> throwTo tid e
-
-    -- First start the main proof process
-    baseProc <- baseProcess pool hindFile' resultChan (NoInvariant invChanBase) errAction
-    stepProc <- stepProcess pool hindFile' (pathCompression opts)
-                  resultChan (NoInvariant invChanStep) errAction
-    modifyMVar_ children (\tids -> return $ tids ++ [("base",baseProc),("step",stepProc)])
-
     when (Opts.intInvGen opts) $ do
-      -- Now kick off the invariant generation process
+      -- Kick off the invariant generation process
       invGenTID <- invGenProcess (undefined :: IntInvGen) pool (pathCompression opts) hindFile' invChan errAction
       modifyMVar_ children
         (\tids -> return $ tids ++ [("intInvGen",invGenTID)])
 
     when (Opts.boolInvGen opts) $ do
-      -- Now kick off the invariant generation process
+      -- Kick off the invariant generation process
       invGenTID <- invGenProcess (undefined :: BoolInvGen) pool (pathCompression opts) hindFile' invChan errAction
       modifyMVar_ children
          (\tids -> return $ tids ++ [("boolInvGen",invGenTID)])
+
+
+    -- Log the discovered invariants.
+    case Opts.invFile opts of
+      Nothing -> return ()
+      Just fname -> do
+        h <- openFile fname WriteMode
+        let loop inv = do
+              inv' <- getInvariantBlocking inv
+              hPutStrLn h (show (mkInvDef inv'))
+              loop inv'
+        tid <- forkIO $ loop (NoInvariant invChan) `finally` hClose h
+        modifyMVar_ children (\tids -> return (("invLog",(tid,return ())):tids))
+
+
+
+
+
+
+    -- Start the main proof process, base and step cases.
+    baseProc <- baseProcess pool hindFile' resultChan (NoInvariant invChanBase) errAction
+    stepProc <- stepProcess pool hindFile' (pathCompression opts)
+                  resultChan (NoInvariant invChanStep) errAction
+    modifyMVar_ children (\tids -> return $ tids ++ [("base",baseProc),("step",stepProc)])
+
 
 
     -- This is the main loop that sits waiting for messages from the
@@ -103,9 +123,6 @@ parCheck pool opts hindFile = withTimeout $ do
                    killThread tid
                    final
                    )
-
-
-
 
     -- If your timeout is so short that you can't even get to this point, then
     -- you're pretty much screwed. Sorry.

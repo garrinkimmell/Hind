@@ -455,7 +455,25 @@ getInvariant inv@(Inv i def c) = do
     fun <- readChan c
     return (True, Inv (i+1) fun c)
 
+getInvariantBlocking (NoInvariant c) = do
+  fun <- readChan c
+  return (Inv 0 fun c)
+getInvariantBlocking inv@(Inv i def c) = do
+    fun <- readChan c
+    return (Inv (i+1) fun c)
 
+
+mkInvDef (Inv i fun _) = def
+  where def = Define_fun (invName i)
+               [Sorted_var "_M" intType] boolType augmented
+        body = fun m
+        augmented
+          | i > 0 =
+            binop "and"
+              (Term_qual_identifier_ (Qual_identifier (Identifier (invName (i-1)))) [m])
+              body
+          | otherwise = body
+        m = Term_qual_identifier (Qual_identifier (Identifier "_M"))
 
 defineInvariant p (NoInvariant _) = return ()
 defineInvariant p (Inv i fun _) = do

@@ -47,6 +47,8 @@ data HindOpts =  HindOpts {
 
   -- Hind Options
   , intInvGen, boolInvGen :: Bool
+  , invFile :: Maybe String
+  , invScript :: Bool
   , timeout :: Maybe Float -- timeout, expressed in seconds
   , delayFinish :: Maybe Float -- amount of time to delay, expressed in seconds,
                    -- used for debugging
@@ -66,10 +68,17 @@ hindArgs = HindOpts {
            &= name "remote"
            &= groupname "SMT Solver"
        , intInvGen = False &= help "Enable Integer Invariant Generation" &= typ "Boolean"
-                     &= groupname "Model Checking Options"
+                     &= groupname "Invariant Generation Options"
        , boolInvGen = False &= help "Enable Boolean Invariant Generation" &= typ "Boolean"
-                      &= groupname "Model Checking Options"
-
+                      &= groupname "Invariant Generation Options"
+       , invFile = Nothing &=
+                   help "File for logging discovered invariants" &=
+                   typ "String" &=
+                   groupname "Invariant Generation Options"
+       , invScript = False &=
+                     help "Generate a new script including discovered invariants" &=
+                     typ "Boolean" &=
+                     groupname "Invariant Generation Options"
        , timeout = Nothing
              &= help "Timeout for model checking"
              &= groupname "Model Checking Options"
