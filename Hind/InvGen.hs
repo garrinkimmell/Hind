@@ -342,6 +342,9 @@ invGenProcess candidateType pool pathcompress hindFile invChan onError =
          -- Assert path compression
          when pathcompress $
            mapM_ (sendCommand p) [stateCharacteristic k' | k' <- [0..k]]
+         ok <- isUnsat p
+         when ok $ do
+           infoM "Hind.invGen.refineloop.step" "Path compression caused unsat"
 
 
          stepRefine' candidate k
