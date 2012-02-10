@@ -44,4 +44,4 @@ int x = Term_spec_constant (Spec_constant_numeral x)
 
 base = Term_qual_identifier (Qual_identifier (Identifier baseVar))
 
-baseTimeIs x = equalTerm base (int x)
+baseTimeIs x = equalTerm base (int 0 `minusTerm` int x)

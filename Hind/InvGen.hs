@@ -148,6 +148,9 @@ mkDef st termMap prevIdx =
 
 
 
+
+
+
 data BoolInvGen = BoolInvGen [[Int]] PO Bool deriving (Eq)
 instance Show BoolInvGen where
   show = showState
@@ -253,7 +256,6 @@ instance InvGen IntInvGen where
 -- type PO = Map Identifier (Set Identifier)
 type PO = M.IntMap S.IntSet
 
-
 -- | FIXME: Dont' use list comprehensions, use map/fold directly on
 -- sets and maps.
 initialSigma s = M.fromList [(k,S.delete k s) | k <- S.toList s]
@@ -304,20 +306,24 @@ invGenProcess candidateType pool pathcompress hindFile invChan onError =
    -- Iteratively check a candidate, and refine using a
    -- counterexample. We exit when we get a property
    -- that holds for step k and k+1 without refinement.
-   let baseRefine candidate k = do
+   let baseInit candidate k = do
          mapM_ assert [transBase k' | k' <- [0..k]]
          -- assert (baseTimeIs k)
          -- Assert the subterm equalities.
          mapM_ assert [subterms (int 0 `minusTerm` int k') | k' <- [0..k]]
-         baseRefine' False candidate k
+         assert (baseTimeIs k)
+         baseRefine candidate k
 
-       baseRefine' refined candidate k = do
-         push 1 p -- Candidate Push
-         let cterm = toTerm candidate (baseTime k)
+       baseRefine candidate k = do
+
+         let cterm = toTerm candidate (int 0 `minusTerm` int k)
          debugM "Hind.invGen.refineloop.base" ("Checking candidate (base " ++ show k ++ ")")
          debugM "Hind.invGen.refineloop.base" (showState candidate)
 
-         assert $ notTerm (baseTimeIs k `impliesTerm` cterm)
+         -- Is it really necessary to assert P for earlier k?
+
+         push 1 p -- Candidate Push
+         assert $ notTerm cterm
          ok <- isUnsat p
 
          if ok
@@ -331,10 +337,19 @@ invGenProcess candidateType pool pathcompress hindFile invChan onError =
              debugM "Hind.invGen.refineloop.base" "Refined Candidate"
              debugM "Hind.invGen.refineloop.base" $
                "Got counterexample:\n\t" ++ show (formatModel  model)
-             let model' = refine candidate model
-             baseRefine' True model' k
+             let candidate' = refine candidate model
+             push 1 p
+             -- Check to see if the refinement was valid
+             assert $ notTerm
+               (cterm  `impliesTerm` toTerm candidate' (int 0 `minusTerm` int k))
+             ok <- isUnsat p
+             unless ok $ do
+               infoM "Hind.invGen" "Refinement is invalid."
+             pop 1 p
 
-       stepRefine candidate k = do
+             baseRefine candidate' k
+
+       stepInit candidate k = do
          -- Assert the transition relation
          mapM_ assert [transStep i | i <- [0..k]]
          -- Assert the subterm equalities
@@ -347,9 +362,9 @@ invGenProcess candidateType pool pathcompress hindFile invChan onError =
            infoM "Hind.invGen.refineloop.step" "Path compression caused unsat"
 
 
-         stepRefine' candidate k
+         stepRefine candidate k
 
-       stepRefine' candidate k = do
+       stepRefine candidate k = do
          push 1 p -- candidate push
          let cterm i = toTerm candidate (stepTime i)
          debugM "Hind.invGen.refineloop.step" "Checking candidate (step)"
@@ -371,19 +386,19 @@ invGenProcess candidateType pool pathcompress hindFile invChan onError =
              model <- getValuation p (vars candidate) (stepTime 0)
              pop 1 p
              debugM "Hind.invGen.refineloop.step" "Refined Candidate"
-             stepRefine' (refine candidate model) k
+             stepRefine (refine candidate model) k
 
        outerloop state k prev = do
          debugM "Hind.invGen.refineloop" $ "Checking for invariant at k " ++ show k
          push 1 p -- Context for base transition assertions
-         (baseCandidate,baseK) <- baseRefine state k
+         (baseCandidate,baseK) <- baseInit state k
          pop 1  p -- Close context  for base transition assertions
 
          debugM "Hind.invGen.refineloop.base" $ "Base process found candidate  " ++
            show (toTerm baseCandidate (baseTime baseK))
 
          push 1 p -- Context for step transition assertions
-         invariant <- stepRefine (resetRefined baseCandidate) baseK
+         invariant <- stepInit (resetRefined baseCandidate) baseK
          pop 1 p
 
          let same = maybe False (== invariant) prev
@@ -596,6 +611,8 @@ mkDefine j term =
 
 
 -- Make the output more readable...
+
+cleanup t = t
 cleanup (Term_qual_identifier_ (Qual_identifier (Identifier "=")) [a,b]) =
             case (cleanup a,cleanup b) of
               (Term_qual_identifier (Qual_identifier (Identifier "true")),

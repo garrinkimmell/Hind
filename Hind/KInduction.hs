@@ -183,34 +183,32 @@ baseProcess pool hindFile resultChan invariant onError =
 
     let trans' x = trans hindFile (int 0  `minusTerm` int x)
         prop' = prop hindFile
-        assert = assertTerm p
+        assert t = assertTerm p t >> return ()
+
+    -- Negate the property.
+    assert (notTerm (prop' (int 0)))
 
     let loop k invId = do
           (new,invId') <- getInvariant invId
+
           when new $ do
             infoM "Hind.stepProcess" "Got a new invariant"
             defineInvariant p invId'
-            sequence_ [assertInvariant p invId' (stepTime i) | i <- [0..k]]
+            sequence_ [assertInvariant p invId' (baseTime i) | i <- [0..k]]
 
-
-          -- send (trans (0 - k))
           assert (trans' (k-1))
+          -- when (k > 1) $ do
+          --   assert (prop' (int (k-1)))
 
-          -- send (not (p (k)), check for unsat
+          let curTime = int 0 `minusTerm` (int (k-1))
           push 1 p
-          -- (not (implies (= _base k-1) (P 0)))
-          assert (notTerm (impliesTerm
-                           (equalTerm base (int 0 `minusTerm` (int (k-1))))
-                           (prop' (int 0))))
-
-          -- assert (notTerm (prop' (k-1)))
+          assert (equalTerm base curTime)
           ok <- isUnsat p
           pop 1 p
           if ok
             then do
             -- assert the property for the current k
-               when (k > 1) $
-                 assert (prop' (int 0 `minusTerm` int (k-1))) >> return ()
+               assert (prop' (int 0 `minusTerm` int k))
                infoM "Hind.baseProcess" $ "Passed for step " ++ show k
                writeChan resultChan (BasePass k)
                loop (k+1) invId'
@@ -239,11 +237,9 @@ stepProcess pool hindFile pathCompress resultChan invariant onError =
         prop' = prop hindFile . stepTime
         assert = assertTerm p
 
-
     -- Send '(not (prop (- _n 0))'
     assert (notTerm (prop' 0))
     assert (trans' 0)
-
 
     -- Send path compression
     when pathCompress $ sendCommand p (stateCharacteristic 0) >> return ()
@@ -259,8 +255,6 @@ stepProcess pool hindFile pathCompress resultChan invariant onError =
           -- Send '(trans (n-k+1)'
           assert (trans' k)
 
-          -- Send '(prop (n-k))'
-          assert (prop' k)
 
           -- Assert path compression
           when pathCompress $ do
@@ -272,6 +266,9 @@ stepProcess pool hindFile pathCompress resultChan invariant onError =
               rsp <- sendCommand p Get_unsat_core
               debugM "Hind.stepProcess" ("Unsat core" ++ show rsp)
 
+
+          -- Send '(prop (n-k))'
+          assert (prop' k)
 
           res <- isUnsat p
           if res
